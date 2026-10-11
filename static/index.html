@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF Editor</title>
+<link rel="icon" href="/static/icon.png">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-open" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
+    <symbol id="i-redo" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5m5 5H10a6 6 0 0 0 0 12h3"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17zM14.5 7.5l3 3"/></symbol>
+    <symbol id="i-add" viewBox="0 0 24 24"><path d="M5 7V5h11v2M10.5 5v13M8 18h5M18 13v6M15 16h6"/></symbol>
+    <symbol id="i-erase" viewBox="0 0 24 24"><path d="m7 20-3.5-3.5a2 2 0 0 1 0-2.8L13 4.2a2 2 0 0 1 2.8 0l4 4a2 2 0 0 1 0 2.8L10.5 20zM9 9l6.5 6.5M7 20h13"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4"/></symbol>
+    <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 6.3M20 4v7h-7"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></symbol>
+    <symbol id="i-font" viewBox="0 0 24 24"><path d="M5 19 11 5h2l6 14M7.5 14h9"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM14 3v5h5M9 13h6M9 17h6"/></symbol>
+  </defs>
+</svg>
+
+<header class="appbar" id="toolbar">
+  <div class="brand">
+    <img src="/static/icon.png" alt="">
+    <span>PDF Editor</span>
+  </div>
+  <div class="group">
+    <button id="btnOpen" class="btn" title="Open a PDF (Ctrl+O)"><svg><use href="#i-open"/></svg>Open</button>
+    <button id="btnSave" class="btn primary" title="Save the edited PDF (Ctrl+S)" disabled><svg><use href="#i-save"/></svg>Download</button>
+  </div>
+  <div class="sep"></div>
+  <div class="group">
+    <button id="btnUndo" class="btn icon" title="Undo (Ctrl+Z)" disabled><svg><use href="#i-undo"/></svg></button>
+    <button id="btnRedo" class="btn icon" title="Redo (Ctrl+Y)" disabled><svg><use href="#i-redo"/></svg></button>
+  </div>
+  <div class="sep"></div>
+  <div class="segmented">
+    <button data-tool="edit" class="tool active" title="Click any text on the page to change it"><svg><use href="#i-edit"/></svg>Edit text</button>
+    <button data-tool="add" class="tool" title="Click anywhere on the page to type new text"><svg><use href="#i-add"/></svg>Add text</button>
+    <button data-tool="erase" class="tool" title="Drag a box over an area to erase it"><svg><use href="#i-erase"/></svg>Erase</button>
+  </div>
+  <div class="sep"></div>
+  <div class="group">
+    <div class="field fontfield" title="Font">
+      <svg><use href="#i-font"/></svg>
+      <input id="font" list="fontlist" placeholder="Font" autocomplete="off" spellcheck="false">
+      <datalist id="fontlist"></datalist>
+    </div>
+    <input id="size" class="field num" type="number" min="1" max="500" step="0.5" value="12" title="Font size">
+    <button id="btnBold" class="btn icon toggle" title="Bold"><b>B</b></button>
+    <button id="btnItalic" class="btn icon toggle" title="Italic"><i>I</i></button>
+    <label class="swatch" title="Text colour"><input id="color" type="color" value="#000000"></label>
+    <button id="btnAddFont" class="btn ghost" title="Add a font file (.ttf / .otf) to the editor"><svg><use href="#i-plus"/></svg>Font</button>
+  </div>
+</header>
+
+<div id="fontbar" class="fontbar hidden"></div>
+
+<div class="body">
+  <aside id="thumbs" class="thumbs hidden"></aside>
+  <main id="main">
+    <div id="empty" class="empty">
+      <div class="drop">
+        <div class="dropicon"><svg><use href="#i-doc"/></svg></div>
+        <h1>Open a PDF to start editing</h1>
+        <p>Click any text to change it in its original font, add new text, erase areas — then download the finished PDF.</p>
+        <button id="btnOpen2" class="btn primary big"><svg><use href="#i-open"/></svg>Choose PDF file</button>
+        <p class="hint">or drag &amp; drop a PDF anywhere in this window</p>
+      </div>
+    </div>
+    <div id="pages" class="pages"></div>
+  </main>
+</div>
+
+<footer class="statusbar">
+  <span id="docName" class="docname">No document</span>
+  <span id="pageLabel"></span>
+  <span class="spacer"></span>
+  <button id="btnZoomOut" class="sbtn" title="Zoom out (Ctrl+-)"><svg><use href="#i-minus"/></svg></button>
+  <span id="zoomLabel">100%</span>
+  <button id="btnZoomIn" class="sbtn" title="Zoom in (Ctrl++)"><svg><use href="#i-plus"/></svg></button>
+  <button id="btnFit" class="sbtn wide" title="Fit page width"><svg><use href="#i-fit"/></svg>Fit width</button>
+</footer>
+
+<div id="toasts" class="toasts"></div>
+<div id="busy" class="overlay hidden"><div class="busybox"><div class="spinner"></div><span id="busyText">Working…</span></div></div>
+<div id="modal" class="overlay hidden">
+  <div class="dialog" role="dialog" aria-modal="true">
+    <h2 id="modalTitle"></h2>
+    <p id="modalMsg"></p>
+    <input id="modalInput" type="password" class="field hidden" autocomplete="off">
+    <div class="actions">
+      <button id="modalCancel" class="btn">Cancel</button>
+      <button id="modalOk" class="btn primary">OK</button>
+    </div>
+  </div>
+</div>
+<input id="file" type="file" accept="application/pdf,.pdf" hidden>
+<input id="fontfile" type="file" accept=".ttf,.otf,.ttc" multiple hidden>
+<script src="/static/app.js"></script>
+</body>
+</html>

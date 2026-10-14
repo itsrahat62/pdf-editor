@@ -6,3 +6,5 @@ dist/
 release/
 .playwright-mcp/
 tests/sample.pdf
+tests/user.pdf
+*.pdf

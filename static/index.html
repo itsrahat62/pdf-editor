@@ -7,60 +7,159 @@
 <link rel="icon" href="/static/icon.png">
 <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
+<body class="tool-edit tab-edit">
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>
     <symbol id="i-open" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
     <symbol id="i-save" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M4 17v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></symbol>
+    <symbol id="i-print" viewBox="0 0 24 24"><path d="M7 9V4h10v5M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M7 14h10v6H7z"/></symbol>
     <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
     <symbol id="i-redo" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5m5 5H10a6 6 0 0 0 0 12h3"/></symbol>
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17zM14.5 7.5l3 3"/></symbol>
     <symbol id="i-add" viewBox="0 0 24 24"><path d="M5 7V5h11v2M10.5 5v13M8 18h5M18 13v6M15 16h6"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M4 4h16v16H4zM8 9h8M8 13h8M8 17h5"/></symbol>
+    <symbol id="i-move" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M12 3l-3 3m3-3 3 3M12 21l-3-3m3 3 3-3M3 12l3-3m-3 3 3 3M21 12l-3-3m3 3-3 3"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><path d="M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15 9.5h.01"/></symbol>
+    <symbol id="i-sign" viewBox="0 0 24 24"><path d="M3 17c3-1 4-9 6-9s-1 9 1 9 3-5 5-5 1 4 3 4 2-1 3-1M3 21h18"/></symbol>
     <symbol id="i-erase" viewBox="0 0 24 24"><path d="m7 20-3.5-3.5a2 2 0 0 1 0-2.8L13 4.2a2 2 0 0 1 2.8 0l4 4a2 2 0 0 1 0 2.8L10.5 20zM9 9l6.5 6.5M7 20h13"/></symbol>
+    <symbol id="i-find" viewBox="0 0 24 24"><path d="M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13zM20 20l-4.8-4.8"/></symbol>
+    <symbol id="i-select" viewBox="0 0 24 24"><path d="m5 3 14 8-6 1.5L10 19z"/></symbol>
+    <symbol id="i-highlight" viewBox="0 0 24 24"><path d="m9 11-5 5v3h6l5-5M9 11l6-6 4 4-6 6M9 11l4 4M14 21h7"/></symbol>
+    <symbol id="i-underline" viewBox="0 0 24 24"><path d="M7 4v7a5 5 0 0 0 10 0V4M5 20h14"/></symbol>
+    <symbol id="i-strike" viewBox="0 0 24 24"><path d="M5 12h14M16 6.5C15 5 13.6 4.5 12 4.5c-2.5 0-4.5 1.3-4.5 3.5 0 1.5 1 2.5 3 3.2M8 17.5c1 1.5 2.4 2 4 2 2.5 0 4.5-1.3 4.5-3.5"/></symbol>
+    <symbol id="i-note" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4zM8 9h8M8 12.5h5"/></symbol>
+    <symbol id="i-draw" viewBox="0 0 24 24"><path d="M3 17c2-4 4-6 6-6s2 4 4 4 3-6 5-6 2 3 3 3"/></symbol>
+    <symbol id="i-rect" viewBox="0 0 24 24"><path d="M4 6h16v12H4z"/></symbol>
+    <symbol id="i-ellipse" viewBox="0 0 24 24"><path d="M12 18c4.4 0 8-2.7 8-6s-3.6-6-8-6-8 2.7-8 6 3.6 6 8 6z"/></symbol>
+    <symbol id="i-line" viewBox="0 0 24 24"><path d="M5 19 19 5"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 19 19 5M10 5h9v9"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
     <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4"/></symbol>
     <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 6.3M20 4v7h-7"/></symbol>
+    <symbol id="i-rotl" viewBox="0 0 24 24"><path d="M4 11a8 8 0 1 1 2.3 6.3M4 4v7h7"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><path d="M8 8h11v12H8zM5 16V4h11"/></symbol>
+    <symbol id="i-blank" viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7zM14 3v5h5M13 12v6M10 15h6"/></symbol>
+    <symbol id="i-merge" viewBox="0 0 24 24"><path d="M4 4h7v9H4zM13 11h7v9h-7zM11 8h5v3"/></symbol>
+    <symbol id="i-extract" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM12 10v7m0 0-3-3m3 3 3-3"/></symbol>
+    <symbol id="i-water" viewBox="0 0 24 24"><path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/></symbol>
+    <symbol id="i-header" viewBox="0 0 24 24"><path d="M5 3h14v18H5zM8 6.5h8M8 17.5h8"/></symbol>
+    <symbol id="i-hash" viewBox="0 0 24 24"><path d="M9 4 7 20M17 4l-2 16M4 9h16M3 15h16"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><path d="M6 11h12v10H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3"/></symbol>
+    <symbol id="i-form" viewBox="0 0 24 24"><path d="M4 4h16v16H4zM7 8h4M7 12h10M7 16h6M14 7h3v2h-3z"/></symbol>
+    <symbol id="i-flat" viewBox="0 0 24 24"><path d="M4 8l8-4 8 4-8 4zM4 12l8 4 8-4M4 16l8 4 8-4"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v6M12 7.5h.01"/></symbol>
+    <symbol id="i-images" viewBox="0 0 24 24"><path d="M7 7h13v12H7zM4 4h13M7 15l4-4 3 3 2-2 4 4"/></symbol>
     <symbol id="i-font" viewBox="0 0 24 24"><path d="M5 19 11 5h2l6 14M7.5 14h9"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3c2.5 2.5 3.5 5.5 3.5 9s-1 6.5-3.5 9c-2.5-2.5-3.5-5.5-3.5-9s1-6.5 3.5-9z"/></symbol>
     <symbol id="i-doc" viewBox="0 0 24 24"><path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM14 3v5h5M9 13h6M9 17h6"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-kb" viewBox="0 0 24 24"><path d="M3 6h18v12H3zM7 10h.01M11 10h.01M15 10h.01M7 14h10"/></symbol>
   </defs>
 </svg>
 
 <header class="appbar" id="toolbar">
-  <div class="brand">
-    <img src="/static/icon.png" alt="">
-    <span>PDF Editor</span>
-  </div>
+  <div class="brand"><img src="/static/icon.png" alt=""><span>PDF Editor</span></div>
   <div class="group">
-    <button id="btnOpen" class="btn" title="Open a PDF (Ctrl+O)"><svg><use href="#i-open"/></svg>Open</button>
+    <div class="menuwrap">
+      <button id="btnOpen" class="btn" title="Open a PDF (Ctrl+O)"><svg><use href="#i-open"/></svg>Open<svg class="caret"><use href="#i-down"/></svg></button>
+      <div id="openMenu" class="menu hidden">
+        <button data-act="open-pdf"><svg><use href="#i-doc"/></svg>Open PDF…<kbd>Ctrl+O</kbd></button>
+        <button data-act="open-images"><svg><use href="#i-images"/></svg>Create PDF from images…</button>
+      </div>
+    </div>
     <button id="btnSave" class="btn primary" title="Save the edited PDF (Ctrl+S)" disabled><svg><use href="#i-save"/></svg>Download</button>
+    <button id="btnPrint" class="btn icon" title="Print (Ctrl+P)" disabled><svg><use href="#i-print"/></svg></button>
   </div>
   <div class="sep"></div>
   <div class="group">
     <button id="btnUndo" class="btn icon" title="Undo (Ctrl+Z)" disabled><svg><use href="#i-undo"/></svg></button>
     <button id="btnRedo" class="btn icon" title="Redo (Ctrl+Y)" disabled><svg><use href="#i-redo"/></svg></button>
   </div>
-  <div class="sep"></div>
-  <div class="segmented">
-    <button data-tool="edit" class="tool active" title="Click any text on the page to change it"><svg><use href="#i-edit"/></svg>Edit text</button>
-    <button data-tool="add" class="tool" title="Click anywhere on the page to type new text"><svg><use href="#i-add"/></svg>Add text</button>
-    <button data-tool="erase" class="tool" title="Drag a box over an area to erase it"><svg><use href="#i-erase"/></svg>Erase</button>
-  </div>
-  <div class="sep"></div>
+  <nav class="tabs" id="tabs">
+    <button data-tab="edit" class="active">Edit</button>
+    <button data-tab="comment">Comment</button>
+    <button data-tab="pages">Pages</button>
+    <button data-tab="tools">Tools</button>
+  </nav>
+  <div class="spacer"></div>
   <div class="group">
+    <div class="segmented kb" id="kbMode" title="Keyboard: F12 switches between English and Bangla">
+      <svg class="kbicon"><use href="#i-kb"/></svg>
+      <button data-kb="en" class="active">EN</button>
+      <button data-kb="avro">অভ্র</button>
+      <button data-kb="bijoy">বিজয়</button>
+    </div>
+    <button id="btnFonts" class="btn ghost" title="Download fonts from the internet"><svg><use href="#i-globe"/></svg>Fonts</button>
+  </div>
+</header>
+
+<div class="ribbon" id="ribbon">
+  <div class="rgroup" data-for="edit">
+    <button class="tool active" data-tool="edit" title="Click any text on the page to change it"><svg><use href="#i-edit"/></svg>Edit text</button>
+    <button class="tool" data-tool="add" title="Click anywhere to type a new line of text"><svg><use href="#i-add"/></svg>Add text</button>
+    <button class="tool" data-tool="textbox" title="Drag a box for a paragraph that wraps"><svg><use href="#i-box"/></svg>Text box</button>
+    <button class="tool" data-tool="move" title="Drag a line of text to a new place"><svg><use href="#i-move"/></svg>Move</button>
+    <button class="tool" data-tool="image" title="Add a picture"><svg><use href="#i-image"/></svg>Image</button>
+    <button class="tool" data-tool="sign" title="Add your signature"><svg><use href="#i-sign"/></svg>Sign</button>
+    <button class="tool" data-tool="erase" title="Drag a box to remove everything under it"><svg><use href="#i-erase"/></svg>Erase</button>
+    <span class="rsep"></span>
+    <button class="rbtn" data-act="find" title="Find & replace (Ctrl+F)"><svg><use href="#i-find"/></svg>Find &amp; Replace</button>
+  </div>
+  <div class="rgroup hidden" data-for="comment">
+    <button class="tool" data-tool="select" title="Select a comment (Delete key removes it)"><svg><use href="#i-select"/></svg>Select</button>
+    <button class="tool" data-tool="highlight" title="Drag over text to highlight it"><svg><use href="#i-highlight"/></svg>Highlight</button>
+    <button class="tool" data-tool="underline" title="Drag over text to underline it"><svg><use href="#i-underline"/></svg>Underline</button>
+    <button class="tool" data-tool="strikeout" title="Drag over text to strike it out"><svg><use href="#i-strike"/></svg>Strike</button>
+    <button class="tool" data-tool="note" title="Click to add a sticky note"><svg><use href="#i-note"/></svg>Note</button>
+    <button class="tool" data-tool="drawing" title="Draw freehand"><svg><use href="#i-draw"/></svg>Draw</button>
+    <button class="tool" data-tool="rectangle" title="Rectangle"><svg><use href="#i-rect"/></svg></button>
+    <button class="tool" data-tool="ellipse" title="Ellipse"><svg><use href="#i-ellipse"/></svg></button>
+    <button class="tool" data-tool="line" title="Line"><svg><use href="#i-line"/></svg></button>
+    <button class="tool" data-tool="arrow" title="Arrow"><svg><use href="#i-arrow"/></svg></button>
+    <span class="rsep"></span>
+    <label class="mini" title="Comment colour">Colour <span class="swatch"><input id="cmtColor" type="color" value="#ffd400"></span></label>
+    <label class="mini" title="Line width">Width
+      <select id="cmtWidth" class="field sel"><option>1</option><option selected>2</option><option>3</option><option>5</option><option>8</option></select>
+    </label>
+  </div>
+  <div class="rgroup hidden" data-for="pages">
+    <span class="hint">Select pages in the left panel (Ctrl / Shift for several); drag them to reorder.</span>
+    <span class="rsep"></span>
+    <button class="rbtn" data-act="page-blank"><svg><use href="#i-blank"/></svg>Insert blank</button>
+    <button class="rbtn" data-act="page-insert-pdf"><svg><use href="#i-merge"/></svg>Insert PDF…</button>
+    <button class="rbtn" data-act="page-insert-images"><svg><use href="#i-images"/></svg>Insert images…</button>
+    <button class="rbtn" data-act="page-duplicate"><svg><use href="#i-copy"/></svg>Duplicate</button>
+    <button class="rbtn" data-act="page-rotl" title="Rotate left"><svg><use href="#i-rotl"/></svg></button>
+    <button class="rbtn" data-act="page-rotr" title="Rotate right"><svg><use href="#i-rotate"/></svg></button>
+    <button class="rbtn" data-act="page-extract"><svg><use href="#i-extract"/></svg>Extract…</button>
+    <button class="rbtn danger" data-act="page-delete"><svg><use href="#i-trash"/></svg>Delete</button>
+  </div>
+  <div class="rgroup hidden" data-for="tools">
+    <button class="rbtn" data-act="watermark"><svg><use href="#i-water"/></svg>Watermark</button>
+    <button class="rbtn" data-act="header"><svg><use href="#i-header"/></svg>Header &amp; footer</button>
+    <button class="rbtn" data-act="pagenum"><svg><use href="#i-hash"/></svg>Page numbers</button>
+    <button class="tool" data-tool="form" title="Fill in the form fields of this PDF"><svg><use href="#i-form"/></svg>Fill form</button>
+    <button class="rbtn" data-act="flatten" title="Turn filled form fields into normal page content"><svg><use href="#i-flat"/></svg>Flatten form</button>
+    <span class="rsep"></span>
+    <button class="rbtn" data-act="protect"><svg><use href="#i-lock"/></svg><span id="protectLabel">Password</span></button>
+    <button class="rbtn" data-act="export-images"><svg><use href="#i-images"/></svg>Export images</button>
+    <button class="rbtn" data-act="properties"><svg><use href="#i-info"/></svg>Properties</button>
+  </div>
+  <div class="spacer"></div>
+  <div class="rgroup fmt" id="fmt">
     <div class="field fontfield" title="Font">
       <svg><use href="#i-font"/></svg>
-      <input id="font" list="fontlist" placeholder="Font" autocomplete="off" spellcheck="false">
+      <input id="font" list="fontlist" placeholder="Font" autocomplete="off" spellcheck="false" data-latin>
       <datalist id="fontlist"></datalist>
     </div>
     <input id="size" class="field num" type="number" min="1" max="500" step="0.5" value="12" title="Font size">
     <button id="btnBold" class="btn icon toggle" title="Bold"><b>B</b></button>
     <button id="btnItalic" class="btn icon toggle" title="Italic"><i>I</i></button>
     <label class="swatch" title="Text colour"><input id="color" type="color" value="#000000"></label>
-    <button id="btnAddFont" class="btn ghost" title="Add a font file (.ttf / .otf) to the editor"><svg><use href="#i-plus"/></svg>Font</button>
   </div>
-</header>
+</div>
 
 <div id="fontbar" class="fontbar hidden"></div>
 
@@ -71,18 +170,30 @@
       <div class="drop">
         <div class="dropicon"><svg><use href="#i-doc"/></svg></div>
         <h1>Open a PDF to start editing</h1>
-        <p>Click any text to change it in its original font, add new text, erase areas — then download the finished PDF.</p>
+        <p>Edit text in its original font, type Bangla with Avro or Bijoy, add images, signatures and comments, organise pages — then download the finished PDF.</p>
         <button id="btnOpen2" class="btn primary big"><svg><use href="#i-open"/></svg>Choose PDF file</button>
-        <p class="hint">or drag &amp; drop a PDF anywhere in this window</p>
+        <p class="hint">or drag &amp; drop a PDF (or images) anywhere in this window</p>
       </div>
     </div>
     <div id="pages" class="pages"></div>
   </main>
+  <aside id="findPanel" class="panel hidden">
+    <div class="panelhead"><b>Find &amp; Replace</b><button class="x" data-act="find-close" title="Close">✕</button></div>
+    <input id="findText" class="field" placeholder="Find">
+    <input id="replText" class="field" placeholder="Replace with">
+    <label class="check"><input id="findCase" type="checkbox"> Match case</label>
+    <div class="row">
+      <button class="btn" data-act="find-go"><svg><use href="#i-find"/></svg>Find</button>
+      <button class="btn primary" data-act="replace-all">Replace all</button>
+    </div>
+    <div id="findResults" class="results"></div>
+  </aside>
 </div>
 
 <footer class="statusbar">
   <span id="docName" class="docname">No document</span>
   <span id="pageLabel"></span>
+  <span id="kbLabel" class="kblabel"></span>
   <span class="spacer"></span>
   <button id="btnZoomOut" class="sbtn" title="Zoom out (Ctrl+-)"><svg><use href="#i-minus"/></svg></button>
   <span id="zoomLabel">100%</span>
@@ -96,15 +207,21 @@
   <div class="dialog" role="dialog" aria-modal="true">
     <h2 id="modalTitle"></h2>
     <p id="modalMsg"></p>
-    <input id="modalInput" type="password" class="field hidden" autocomplete="off">
+    <div id="modalBody"></div>
     <div class="actions">
       <button id="modalCancel" class="btn">Cancel</button>
       <button id="modalOk" class="btn primary">OK</button>
     </div>
   </div>
 </div>
-<input id="file" type="file" accept="application/pdf,.pdf" hidden>
+<input id="file" type="file" accept="application/pdf,.pdf,image/*" multiple hidden>
 <input id="fontfile" type="file" accept=".ttf,.otf,.ttc" multiple hidden>
+<input id="anyfile" type="file" hidden>
+<iframe id="printFrame" title="print" style="position:absolute;width:0;height:0;border:0;left:-9999px"></iframe>
+<script src="/static/vendor/avro-lib.js"></script>
+<script src="/static/bangla.js"></script>
+<script src="/static/vendor/bijoy2unicode.js"></script>
+<script src="/static/ansi.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

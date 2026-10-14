@@ -4,6 +4,7 @@ Text is edited line by line: the original glyphs are removed from the page
 (a text-only redaction, so backgrounds and images stay intact) and the new
 text is written back with the same font, size and colour.
 """
+import difflib
 import html as html_mod
 import io
 import math
@@ -13,7 +14,10 @@ import time
 import pymupdf as fitz
 from fontTools.ttLib import TTFont
 
-from font_manager import (FLAG_BOLD, FLAG_ITALIC, FontChoice, is_complex, norm,
+import textmap
+from errors import EditError
+from pdf_features import FeaturesMixin
+from font_manager import (FLAG_BOLD, FLAG_ITALIC, FontChoice, is_ansi_bangla, is_complex, norm,
                           strip_subset)
 
 fitz.TOOLS.set_subset_fontnames(True)
@@ -22,10 +26,8 @@ MAX_UNDO = 30
 BOOT_ID = "%x" % int(time.time() * 1000)
 _MISSING = object()
 TEXT_FLAGS = fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES & ~fitz.TEXT_PRESERVE_LIGATURES
-
-
-class EditError(Exception):
-    pass
+IGNORE_ACTUALTEXT = getattr(fitz, "TEXT_IGNORE_ACTUALTEXT", 2048)
+ZERO_WIDTH = ("‌", "‍", "﻿")
 
 
 def _rgb(color):
@@ -37,7 +39,7 @@ def _clean(text):
     return (text or "").replace(" ", " ").replace("\r", "").replace("\n", " ")
 
 
-class PdfEditor:
+class PdfEditor(FeaturesMixin):
     def __init__(self, fonts):
         self.fm = fonts
         self.lock = threading.RLock()
@@ -243,52 +245,356 @@ class PdfEditor:
         with self.lock:
             self._need()
             page = self.doc[pno]
-            out, info = [], {}
-            for block in page.get_text("dict", flags=TEXT_FLAGS)["blocks"]:
-                for line in block.get("lines", []):
-                    spans = []
-                    for s in line["spans"]:
-                        text = s["text"].replace(" ", " ").replace("­", "-")
-                        if not text:
-                            continue
-                        prev = spans[-1] if spans else None
-                        if (prev and prev["font"] == s["font"] and abs(prev["size"] - s["size"]) < 0.05
-                                and prev["color"] == s["color"] and prev["flags"] == s["flags"]
-                                and abs(prev["origin"][1] - s["origin"][1]) < 0.5
-                                and s["origin"][0] >= prev["origin"][0] - 0.5):
-                            prev["text"] += text
-                            prev["boxes"].append(list(s["bbox"]))
-                            b = prev["bbox"]
-                            prev["bbox"] = [min(b[0], s["bbox"][0]), min(b[1], s["bbox"][1]),
-                                            max(b[2], s["bbox"][2]), max(b[3], s["bbox"][3])]
-                            continue
-                        spans.append({
-                            "text": text, "font": s["font"], "name": strip_subset(s["font"]),
-                            "size": round(s["size"], 3), "color": s["color"], "flags": s["flags"],
-                            "bbox": list(s["bbox"]), "boxes": [list(s["bbox"])],
-                            "origin": list(s["origin"]),
-                        })
-                    if not spans or not any(sp["text"].strip() for sp in spans):
-                        continue
-                    for sp in spans:
-                        key = "%s|%d" % (sp["font"], sp["flags"])
-                        if key not in info:
-                            fc = self.font_chain(page, sp["font"], sp["flags"])[0]
-                            info[key] = {"label": fc.label, "kind": fc.kind}
-                    out.append({
-                        "bbox": [min(sp["bbox"][0] for sp in spans), min(sp["bbox"][1] for sp in spans),
-                                 max(sp["bbox"][2] for sp in spans), max(sp["bbox"][3] for sp in spans)],
-                        "dir": list(line["dir"]),
-                        "spans": spans,
-                    })
+            out = self._geom_lines(page)
+            try:
+                self._apply_fields(page, out)
+            except Exception:
+                pass
+            info = {}
+            for ln in out:
+                for sp in ln["spans"]:
+                    if is_ansi_bangla(sp["font"]) and not any("ঀ" <= c <= "৿" for c in sp["text"]):
+                        sp["ansi"] = True
+                    key = "%s|%d" % (sp["font"], sp["flags"])
+                    if key not in info:
+                        fc = self.font_chain(page, sp["font"], sp["flags"])[0]
+                        info[key] = {"label": fc.label, "kind": fc.kind,
+                                     "family": fc.family if fc.installed else None}
             return {"lines": out, "fonts": info}
+
+    @staticmethod
+    def _line_at(lines, x, y):
+        best, area = None, None
+        for i, ln in enumerate(lines):
+            b = ln["bbox"]
+            if b[0] - 1 <= x <= b[2] + 1 and b[1] - 1 <= y <= b[3] + 1:
+                a = (b[2] - b[0]) * (b[3] - b[1])
+                if area is None or a < area:
+                    best, area = i, a
+        return best
+
+    def _apply_fields(self, page, lines):
+        """Give lines drawn inside /ActualText spans their real Unicode text."""
+        fields = textmap.page_fields(page)
+        if not fields:
+            return
+        chars = []
+        for b in page.get_text("rawdict", flags=TEXT_FLAGS)["blocks"]:
+            for ln in b.get("lines", []):
+                for s in ln["spans"]:
+                    for c in s["chars"]:
+                        if c["c"] in ZERO_WIDTH:
+                            continue
+                        x0, y0, x1, y1 = c["bbox"]
+                        chars.append((c["c"], (x0 + x1) / 2, (y0 + y1) / 2))
+        # whitespace is unreliable in MuPDF's ActualText output: match without it
+        spos = [k for k, c in enumerate(chars) if not c[0].isspace()]
+        sns = "".join(chars[k][0] for k in spos)
+
+        # 1. find each field's characters; MuPDF puts them roughly on the field's glyphs
+        found, owner, pos, claimed = [], {}, 0, set()
+
+        def hits_of(match):
+            where_, spans_ = [None] * len(ftext), {}
+            for fk, sk in match:
+                ch, cx, cy = chars[spos[sk]]
+                hit = self._span_at(lines, cx, cy)
+                if hit:
+                    where_[fpos[fk]] = hit[0]
+                    spans_.setdefault(hit[0], set()).add(hit[1])
+            return where_, spans_
+
+        for fi, (_, _, _, text) in enumerate(fields):
+            ftext = text.replace("\r\n", "\n").replace("\r", "\n")
+            # Avro and other keyboards add invisible joiners MuPDF drops when extracting
+            ftext = "".join(ch for ch in ftext if ch not in ZERO_WIDTH)
+            if not ftext.strip():
+                continue
+            fpos = [k for k, ch in enumerate(ftext) if not ch.isspace()]
+            fns = "".join(ftext[k] for k in fpos)
+            match = self._align(fns, sns, pos)
+            if not match:
+                continue
+            where, spans_hit = hits_of(match)
+            # a short field can also match inside a longer one: take an occurrence
+            # whose glyphs no earlier field owns
+            tries = 0
+            while any((li, n) in claimed for li, ns in spans_hit.items() for n in ns) and tries < 40:
+                tries += 1
+                nxt = sns.find(fns, match[0][1] + 1)
+                if nxt < 0:
+                    break
+                match = [(k, nxt + k) for k in range(len(fns))]
+                where, spans_hit = hits_of(match)
+            spans_hit = {li: {n for n in ns if (li, n) not in claimed} for li, ns in spans_hit.items()}
+            spans_hit = {li: ns for li, ns in spans_hit.items() if ns}
+            where = [w if w in spans_hit else None for w in where]
+            pos = max(pos, match[-1][1] + 1)
+            touched = sorted(spans_hit)
+            if touched:
+                found.append((fi, text, ftext, where, touched, spans_hit))
+                for li in touched:
+                    owner.setdefault(li, fi)
+                    claimed.update((li, n) for n in spans_hit[li])
+
+        # 2. add wrapped continuation lines that received no characters
+        for fi, text, ftext, where, touched, spans_hit in found:
+            ref = lines[max(touched)]
+            left = lines[min(touched)]["bbox"][0]
+            j = max(touched) + 1
+            while j < len(lines) and j not in owner:
+                ln = lines[j]
+                h = ref["bbox"][3] - ref["bbox"][1]
+                dy = ln["bbox"][1] - ref["bbox"][1]
+                if (ln["spans"][0]["font"] != ref["spans"][0]["font"] or not 0.5 * h < dy < 2.2 * h
+                        or abs(ln["bbox"][0] - left) > 60):
+                    break
+                touched.append(j)
+                owner[j] = fi
+                ref = ln
+                j += 1
+
+            # 3. split the field text over its lines
+            order = sorted(touched, key=lambda i: (round(lines[i]["bbox"][1]), lines[i]["bbox"][0]))
+            parts = [t.strip() for t in ftext.split("\n") if t.strip()]
+            keep = None
+            if len(parts) > len(order):
+                # some generators draw part of a field a second time outside it;
+                # a part that already is a line of its own is not drawn here
+                loose = {"".join("".join(q["text"] for q in ln["spans"]).split())
+                         for i, ln in enumerate(lines) if i not in owner}
+                drawn = [k for k, t in enumerate(parts) if "".join(t.split()) not in loose]
+                if len(drawn) == len(order):
+                    keep = drawn
+            if keep is not None:
+                pieces = [parts[k] for k in keep]
+            else:
+                pieces = self._split_field(ftext, where, order, lines)
+            if not pieces:
+                continue
+            for k, li in enumerate(order):
+                ln = lines[li]
+                hit = spans_hit.get(li) or set(range(len(ln["spans"])))
+                # shaped scripts leave pieces (a pre-base vowel sign, ...) that got no
+                # letter of their own; anything lying inside the field's extent is the field's
+                dc, ds = ln["dir"][0], ln["dir"][1]
+
+                def along(sp_):
+                    b = sp_["bbox"]
+                    v = [x * dc + y * ds for x in (b[0], b[2]) for y in (b[1], b[3])]
+                    return min(v), max(v)
+                hx0 = min(along(ln["spans"][n])[0] for n in hit)
+                hx1 = max(along(ln["spans"][n])[1] for n in hit)
+                for n, s in enumerate(ln["spans"]):
+                    a0, a1 = along(s)
+                    if min(a1, hx1) - max(a0, hx0) > 0.5 * max(a1 - a0, 0.01):
+                        hit.add(n)
+                mine = [s for n, s in enumerate(ln["spans"]) if n in hit]
+                others = [s for n, s in enumerate(ln["spans"]) if n not in hit]
+                sp0 = min(mine, key=lambda s: s["origin"][0] * dc + s["origin"][1] * ds)
+                span = dict(sp0)
+                span["text"] = pieces[k]
+                if others and len(pieces) == 1:
+                    # sharing a line with other text: keep the gap to the neighbour
+                    span["text"] = ((" " if ftext[:1] == " " else "") + pieces[k] +
+                                    (" " if ftext[-1:] == " " else ""))
+                span["bbox"] = [min(s["bbox"][0] for s in mine), min(s["bbox"][1] for s in mine),
+                                max(s["bbox"][2] for s in mine), max(s["bbox"][3] for s in mine)]
+                span["boxes"] = [bx for s in mine for bx in s["boxes"]]
+                span["field"] = True
+                ln["spans"] = sorted(others + [span], key=lambda s: s["origin"][0] * dc + s["origin"][1] * ds)
+                if keep is None:
+                    rest = pieces[:k] + pieces[k + 1:]
+                else:
+                    rest = [t for n, t in enumerate(parts) if n != keep[k]]
+                ln["field"] = {"index": fi, "text": text, "rest": "\n".join(rest)}
+
+    @staticmethod
+    def _align(fns, sns, pos):
+        """Match the field letters (no spaces) to the extracted letters from `pos` on.
+        Returns [(field index, stream index)] or None."""
+        if not fns:
+            return None
+        start = sns.find(fns, pos)
+        if start >= 0:
+            return [(k, start + k) for k in range(len(fns))]
+        # anchor on the first chunk that can be found, then align loosely
+        anchor = -1
+        for k in range(0, max(1, len(fns) - 4), max(1, len(fns) // 8)):
+            chunk = fns[k:k + 5]
+            at = sns.find(chunk, pos)
+            if at >= 0:
+                anchor = max(pos, at - k)
+                break
+        if anchor < 0:
+            return None
+        window = sns[anchor:anchor + int(len(fns) * 1.5) + 20]
+        sm = difflib.SequenceMatcher(None, fns, window, autojunk=False)
+        pairs = []
+        for a, b, n in sm.get_matching_blocks():
+            pairs.extend((a + d, anchor + b + d) for d in range(n))
+        if len(pairs) < 0.6 * len(fns):
+            return None
+        return pairs
+
+    @staticmethod
+    def _span_at(lines, x, y):
+        """(line index, span index) of the span drawn at a point."""
+        best, area = None, None
+        for i, ln in enumerate(lines):
+            b = ln["bbox"]
+            if not (b[0] - 1 <= x <= b[2] + 1 and b[1] - 1 <= y <= b[3] + 1):
+                continue
+            a = (b[2] - b[0]) * (b[3] - b[1])
+            if area is not None and a >= area:
+                continue
+            k = 0
+            dc, ds = ln["dir"][0], ln["dir"][1]
+            p = x * dc + y * ds
+            for n, s in enumerate(ln["spans"]):
+                sb = s["bbox"]
+                v = [bx * dc + by * ds for bx in (sb[0], sb[2]) for by in (sb[1], sb[3])]
+                if min(v) - 1 <= p <= max(v) + 1:
+                    k = n
+                    break
+            best, area = (i, k), a
+        return best
+
+    @staticmethod
+    def _split_field(ftext, where, order, lines):
+        """Split a field's text into one piece per drawn line."""
+        n = len(order)
+        parts = [t.strip() for t in ftext.split("\n") if t.strip()]
+        if len(parts) == n:
+            return parts
+        # the glyph text is unreadable but keeps word gaps: match word counts
+        counts = [len(" ".join(s["text"] for s in lines[i]["spans"]).split()) for i in order]
+        words = ftext.split()
+        if sum(counts) == len(words) and all(counts):
+            out, k = [], 0
+            for c in counts:
+                out.append(" ".join(words[k:k + c]))
+                k += c
+            return out
+        # otherwise: where did the characters land, snapped to word gaps
+        starts = []
+        for li in order:
+            ks = [k for k, w in enumerate(where) if w == li]
+            starts.append(min(ks) if ks else None)
+        starts[0] = 0
+        bounds = list(starts) + [len(ftext)]
+        i = 0
+        while i < n:                       # share text with lines that got no characters
+            if bounds[i] is None:
+                a = i - 1
+                b = i
+                while bounds[b] is None:
+                    b += 1
+                widths = [lines[order[k]]["bbox"][2] - lines[order[k]]["bbox"][0] for k in range(a, b)]
+                total = sum(widths) or 1
+                acc = 0
+                for k in range(a, b - 1):
+                    acc += widths[k - a]
+                    bounds[k + 1] = int(bounds[a] + (bounds[b] - bounds[a]) * acc / total)
+                i = b
+            else:
+                i += 1
+        for k in range(1, n):
+            b = bounds[k]
+            best = None
+            for d in range(0, 16):
+                for cand in (b - d, b + d):
+                    if bounds[k - 1] < cand < bounds[k + 1] and ftext[cand - 1].isspace() and not ftext[cand].isspace():
+                        best = cand
+                        break
+                if best is not None:
+                    break
+            if best is not None:
+                bounds[k] = best
+        pieces = [ftext[bounds[k]:bounds[k + 1]].replace("\n", " ").strip() for k in range(n)]
+        return pieces if all(pieces) else None
+
+    def _geom_lines(self, page):
+        """Text lines with their true glyph positions."""
+        out = []
+        for bno, block in enumerate(page.get_text("dict", flags=TEXT_FLAGS | IGNORE_ACTUALTEXT)["blocks"]):
+            for line in block.get("lines", []):
+                spans = []
+                for s in line["spans"]:
+                    text = s["text"].replace(" ", " ").replace("­", "-")
+                    if not text:
+                        continue
+                    prev = spans[-1] if spans else None
+                    if (prev and prev["font"] == s["font"] and abs(prev["size"] - s["size"]) < 0.05
+                            and prev["color"] == s["color"] and prev["flags"] == s["flags"]
+                            and abs(prev["origin"][1] - s["origin"][1]) < 0.5
+                            and s["origin"][0] >= prev["origin"][0] - 0.5):
+                        prev["text"] += text
+                        prev["boxes"].append(list(s["bbox"]))
+                        b = prev["bbox"]
+                        prev["bbox"] = [min(b[0], s["bbox"][0]), min(b[1], s["bbox"][1]),
+                                        max(b[2], s["bbox"][2]), max(b[3], s["bbox"][3])]
+                        continue
+                    spans.append({
+                        "text": text, "font": s["font"], "name": strip_subset(s["font"]),
+                        "size": round(s["size"], 3), "color": s["color"], "flags": s["flags"],
+                        "bbox": list(s["bbox"]), "boxes": [list(s["bbox"])],
+                        "origin": list(s["origin"]),
+                    })
+                if not spans or not any(sp["text"].strip() for sp in spans):
+                    continue
+                out.append({
+                    "bbox": [min(sp["bbox"][0] for sp in spans), min(sp["bbox"][1] for sp in spans),
+                             max(sp["bbox"][2] for sp in spans), max(sp["bbox"][3] for sp in spans)],
+                    "dir": list(line["dir"]),
+                    "spans": spans,
+                    "block": bno,
+                })
+        return self._join_lines(out)
+
+    @staticmethod
+    def _join_lines(lines):
+        """Shaped scripts (Bangla, ...) are drawn with glyphs out of order, which makes
+        MuPDF cut one visual line into pieces. Put pieces that share a baseline and
+        touch each other back together (in any writing direction)."""
+        def extent(ln, c, s):
+            b = ln["bbox"]
+            vals = [x * c + y * s for x in (b[0], b[2]) for y in (b[1], b[3])]
+            return min(vals), max(vals)
+
+        out = []
+        for ln in lines:
+            sp = ln["spans"][0]
+            c, s = ln["dir"][0], ln["dir"][1]
+            for prev in out:
+                psp = prev["spans"][0]
+                if abs(prev["dir"][0] - c) > 1e-3 or abs(prev["dir"][1] - s) > 1e-3:
+                    continue
+                if abs(psp["size"] - sp["size"]) > 0.1:
+                    continue
+                perp_p = -psp["origin"][0] * s + psp["origin"][1] * c
+                perp_c = -sp["origin"][0] * s + sp["origin"][1] * c
+                if abs(perp_p - perp_c) > 0.6:
+                    continue
+                a0, a1 = extent(prev, c, s)
+                b0, b1 = extent(ln, c, s)
+                gap = 0.5 * sp["size"]
+                if b0 < a1 + gap and a0 < b1 + gap:
+                    pb, b = prev["bbox"], ln["bbox"]
+                    prev["spans"] = sorted(prev["spans"] + ln["spans"],
+                                           key=lambda q: q["origin"][0] * c + q["origin"][1] * s)
+                    prev["bbox"] = [min(pb[0], b[0]), min(pb[1], b[1]), max(pb[2], b[2]), max(pb[3], b[3])]
+                    break
+            else:
+                out.append(ln)
+        return out
 
     def _runs(self, text, chain):
         """Split text into (text, font) runs, falling back per character."""
         runs = []
         cur = None
         for ch in text:
-            if cur is not None and ch.isspace() and cur.has(ch):
+            if cur is not None and (ch.isspace() or not ch.isascii()) and cur.has(ch):
                 fc = cur
             else:
                 fc = next((c for c in chain if c.has(ch)), chain[0])
@@ -322,8 +628,40 @@ class PdfEditor:
         tmp.close()
         if ox is None:
             return x
+        before = page.get_contents()
         page.insert_htmlbox(box + (x - ox, y - oy, x - ox, y - oy), body, css=css, archive=arch, scale_low=1)
+        # shaped glyphs do not map back to letters; record the real text with them
+        textmap.wrap_new_contents(page, before, text)
         return x + (x1 - ox)
+
+    def _write_shaped_turned(self, page, p, d, text, fc, size, color):
+        """Shaped text along a turned baseline starting at p. Returns its length,
+        or None for angles other than 90 / 180 / 270 degrees."""
+        c, s = round(d[0]), round(d[1])
+        if abs(d[0] - c) > 0.02 or abs(d[1] - s) > 0.02 or (c, s) == (1, 0):
+            return None
+        tmp = fitz.open()
+        tp = tmp.new_page(width=9010, height=size * 4 + 60)
+        end = self._write_shaped(tp, 10, size * 2, text, fc, size, color)
+        y0 = y1 = None
+        for b in tp.get_text("dict", flags=TEXT_FLAGS | IGNORE_ACTUALTEXT)["blocks"]:
+            for ln in b.get("lines", []):
+                y0 = ln["bbox"][1] if y0 is None else min(y0, ln["bbox"][1])
+                y1 = ln["bbox"][3] if y1 is None else max(y1, ln["bbox"][3])
+        if y0 is None:
+            return 0.0
+        w, asc, desc = end - 10, size * 2 - y0, y1 - size * 2
+        clip = fitz.Rect(10, y0, end, y1)
+        if (c, s) == (0, -1):      # reads upwards
+            target, rot = fitz.Rect(p.x - asc, p.y - w, p.x + desc, p.y), 90
+        elif (c, s) == (0, 1):     # reads downwards
+            target, rot = fitz.Rect(p.x - desc, p.y, p.x + asc, p.y + w), -90
+        else:                      # upside down
+            target, rot = fitz.Rect(p.x - w, p.y - desc, p.x, p.y + asc), 180
+        before = page.get_contents()
+        page.show_pdf_page(target, tmp, 0, clip=clip, rotate=rot)
+        textmap.wrap_new_contents(page, before, text)
+        return w
 
     def _write(self, page, x, y, text, chain, size, color, morph=None, report=None):
         """Write text starting at baseline point (x, y). Returns end x."""
@@ -335,6 +673,15 @@ class PdfEditor:
             if is_complex(run_text) and fc.data and morph is None:
                 x = self._write_shaped(page, x, y, run_text, fc, size, color)
                 continue
+            if is_complex(run_text) and fc.data:
+                # turned text (90/180/270 degrees) still needs shaping
+                o, m = morph
+                c, s = m.a, -m.b
+                p = fitz.Point(o.x + (x - o.x) * c, o.y + (x - o.x) * s)
+                w = self._write_shaped_turned(page, p, (c, s), run_text, fc, size, color)
+                if w is not None:
+                    x += w
+                    continue
             tw = fitz.TextWriter(page.rect, color=_rgb(color))
             _, last = tw.append((x, y), run_text, font=fc.font, fontsize=size)
             tw.write_text(page, morph=morph)
@@ -352,17 +699,20 @@ class PdfEditor:
         dy = min(0.4, (y1 - y0) * 0.1)
         return fitz.Rect(mid - w * 0.08, y0 + dy, mid + w * 0.08, y1 - dy)
 
-    def edit_line(self, pno, line, segs, ov=None):
+    def edit_line(self, pno, line, segs, ov=None, move=None, snapshot=True):
         """Replace the text of one line.
 
         line: the line object as returned by lines(); segs: [{src, text}] where src
         is the index of the original span whose style the text carries; ov: optional
-        style override {family, bold, italic, size, color} for the whole line.
+        style override {family, bold, italic, size, color} for the whole line;
+        move: optional (dx, dy) to shift the line.
         """
         with self.lock:
             self._need()
             page = self.doc[pno]
             ov = {k: v for k, v in (ov or {}).items() if v is not None and v != ""}
+            dx, dy = (float(move[0]), float(move[1])) if move else (0.0, 0.0)
+            force = bool(move)
             spans = line["spans"]
             c, s = line.get("dir", [1, 0])[:2]
             horizontal = abs(c) >= abs(s)
@@ -378,17 +728,17 @@ class PdfEditor:
             shift = 0.0
             for i, sp in enumerate(spans):
                 new = by_src.get(i, "")
-                changed = bool(ov) or new != sp["text"]
+                changed = bool(ov) or force or new != sp["text"]
                 if straight and not changed and abs(shift) < 0.3:
                     continue
                 if not straight and not plan and not changed and not any(
-                        bool(ov) or by_src.get(j, "") != spans[j]["text"] for j in range(i, len(spans))):
+                        bool(ov) or force or by_src.get(j, "") != spans[j]["text"] for j in range(i, len(spans))):
                     continue
                 plan.append([sp, new, changed])
                 if straight:
                     chain = self.font_chain(page, sp["font"], sp["flags"], ov, sp["text"])
                     size = float(ov.get("size") or sp["size"])
-                    plan[-1] += [chain, size, sp["origin"][0] + shift]
+                    plan[-1] += [chain, size, sp["origin"][0] + shift + dx]
                     if changed:
                         shift += self._measure(new, chain, size) - (sp["bbox"][2] - sp["bbox"][0])
             if not plan:
@@ -401,7 +751,8 @@ class PdfEditor:
                     item += [self.font_chain(page, sp["font"], sp["flags"], ov, sp["text"]),
                              float(ov.get("size") or sp["size"]), None]
 
-            self._snapshot()
+            if snapshot:
+                self._snapshot()
             try:
                 for sp, _, _, _, _, _ in plan:
                     for box in sp["boxes"]:
@@ -409,14 +760,21 @@ class PdfEditor:
                 page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE,
                                       graphics=fitz.PDF_REDACT_LINE_ART_NONE,
                                       text=fitz.PDF_REDACT_TEXT_REMOVE)
+                field = line.get("field")
+                if field and any(item[0].get("field") for item in plan):
+                    # the line's words now live in the new text, not in the old field
+                    self._set_field_text(page, field)
+                elif not field:
+                    # the same words may also sit in a field drawn elsewhere
+                    self._drop_field_part(page, "".join(sp["text"] for sp in spans))
                 report = []
                 if straight:
                     for sp, new, _, chain, size, x in plan:
                         if new:
-                            self._write(page, x, sp["origin"][1], new, chain, size,
+                            self._write(page, x, sp["origin"][1] + dy, new, chain, size,
                                         ov.get("color", sp["color"]), None, report)
                 else:
-                    ox, oy = spans[0]["origin"]
+                    ox, oy = spans[0]["origin"][0] + dx, spans[0]["origin"][1] + dy
                     morph = (fitz.Point(ox, oy), fitz.Matrix(c, -s, s, c, 0, 0))
                     x = ox
                     for sp, new, _, chain, size, _ in plan:
@@ -424,10 +782,31 @@ class PdfEditor:
                             x = self._write(page, x, oy, new, chain, size,
                                             ov.get("color", sp["color"]), morph, report)
             except Exception as e:
-                self._rollback()
+                if snapshot:
+                    self._rollback()
                 raise EditError("Edit failed: %s" % e)
             self.version += 1
             return {"changed": True, "fonts": report}
+
+    @staticmethod
+    def _drop_field_part(page, text):
+        key = "".join(text.split())
+        if not key:
+            return
+        for i, f in enumerate(textmap.page_fields(page)):
+            parts = f[3].replace("\r\n", "\n").split("\n")
+            for k, p in enumerate(parts):
+                if "".join(p.split()) == key and len([q for q in parts if q.strip()]) > 1:
+                    textmap.set_field(page, i, "\n".join(parts[:k] + parts[k + 1:]))
+                    return
+
+    @staticmethod
+    def _set_field_text(page, field):
+        fields = textmap.page_fields(page)
+        cands = [i for i, f in enumerate(fields) if f[3] == field["text"]]
+        if cands:
+            i = min(cands, key=lambda i: abs(i - field["index"]))
+            textmap.set_field(page, i, field["rest"])
 
     def _measure(self, text, chain, size):
         w = 0.0

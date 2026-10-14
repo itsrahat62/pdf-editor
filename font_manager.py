@@ -20,7 +20,7 @@ from paths import CACHE_DIR, USER_FONT_DIR, system_font_dirs
 logging.getLogger("fontTools").setLevel(logging.CRITICAL)
 
 FONT_EXTS = (".ttf", ".otf", ".ttc", ".otc")
-INDEX_VERSION = 3
+INDEX_VERSION = 4
 
 # PDF span flag bits (PyMuPDF)
 FLAG_ITALIC = 2
@@ -76,6 +76,15 @@ def _strip_style(n):
     return n
 
 
+def is_ansi_bangla(fontname):
+    """Old "ANSI" Bangla fonts (SutonnyMJ, Kalpurush ANSI, ...) draw Bangla letters
+    at Latin code points; text in them is typed with the Bijoy encoding."""
+    n = re.sub(r"[-, ]*(bold|italic|bolditalic|regular)$", "", strip_subset(fontname or ""), flags=re.I)
+    if re.search(r"OMJ$", n, re.I):
+        return False
+    return bool(re.search(r"MJ$|ANSI", n, re.I) or re.match(r"(Sutonny|Bijoy|Boishakhi)", n, re.I))
+
+
 def is_complex(text):
     """True if the text needs OpenType shaping (Indic, Arabic, Hebrew, Thai ...)."""
     for ch in text:
@@ -88,7 +97,8 @@ def is_complex(text):
 class FontChoice:
     """A concrete font that can be used to write text into a PDF."""
 
-    def __init__(self, font, label, kind, data=None, family=None, bold=False, italic=False, cmap=None):
+    def __init__(self, font, label, kind, data=None, family=None, bold=False, italic=False, cmap=None,
+                 installed=False):
         self.font = font          # pymupdf.Font
         self.label = label        # human readable name
         self.kind = kind          # embedded | system | builtin | similar | substitute
@@ -97,6 +107,7 @@ class FontChoice:
         self.bold = bold
         self.italic = italic
         self._cmap = cmap         # optional set of codepoints (trusted unicode cmap)
+        self.installed = installed  # a Windows font the browser can use by name
 
     def has(self, ch):
         cp = ord(ch)
@@ -144,23 +155,28 @@ class FontManager:
     def _build(self):
         try:
             files = self._font_files()
-            sig = hashlib.md5(json.dumps([INDEX_VERSION, files]).encode()).hexdigest()
             cache = os.path.join(CACHE_DIR, "font_index.json")
-            entries = None
+            known = {}
             try:
                 with open(cache, "r", encoding="utf-8") as f:
                     saved = json.load(f)
-                if saved.get("sig") == sig:
-                    entries = saved["entries"]
+                if saved.get("version") == INDEX_VERSION:
+                    known = saved.get("files", {})
             except Exception:
-                entries = None
-            if entries is None:
-                entries = []
-                for p, _, _ in files:
-                    entries.extend(self._scan_file(p))
+                known = {}
+            # only fonts that are new or changed since last time are read again
+            index, entries, changed = {}, [], False
+            for p, mtime, size in files:
+                rec = known.get(p)
+                if not rec or rec["m"] != mtime or rec["s"] != size:
+                    rec = {"m": mtime, "s": size, "e": self._scan_file(p)}
+                    changed = True
+                index[p] = rec
+                entries.extend(rec["e"])
+            if changed or len(index) != len(known):
                 try:
                     with open(cache, "w", encoding="utf-8") as f:
-                        json.dump({"sig": sig, "entries": entries}, f)
+                        json.dump({"version": INDEX_VERSION, "files": index}, f)
                 except OSError:
                     pass
             self._index(entries)
@@ -326,9 +342,19 @@ class FontManager:
             if fc is None:
                 data = self.entry_bytes(entry)
                 fc = FontChoice(fitz.Font(fontbuffer=data), entry["full"], kind, data,
-                                entry["family"], entry["bold"], entry["italic"])
+                                entry["family"], entry["bold"], entry["italic"],
+                                installed=self.is_installed(entry["path"]))
                 self._choice_cache[key] = fc
             return fc
+
+    @staticmethod
+    def is_installed(path):
+        """Fonts in the Windows font folders are known to the browser by name."""
+        p = os.path.normcase(os.path.abspath(path))
+        dirs = [os.path.join(os.environ.get("WINDIR") or r"C:\Windows", "Fonts")]
+        if os.environ.get("LOCALAPPDATA"):
+            dirs.append(os.path.join(os.environ["LOCALAPPDATA"], "Microsoft", "Windows", "Fonts"))
+        return any(p.startswith(os.path.normcase(os.path.abspath(d)) + os.sep) for d in dirs)
 
     def builtin(self, pdfname):
         code = BASE14.get(norm(strip_subset(pdfname)))

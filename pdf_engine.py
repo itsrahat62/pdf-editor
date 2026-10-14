@@ -92,11 +92,19 @@ class PdfEditor(FeaturesMixin):
                 "can_redo": bool(self.redo_stack),
             }
 
-    def render(self, pno, scale):
+    def render(self, pno, scale=1.5, width=None, height=None):
         with self.lock:
             self._need()
-            scale = max(0.05, min(float(scale), 6.0))
-            pix = self.doc[pno].get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+            page = self.doc[pno]
+            if width and height:
+                # exactly the screen pixels the page occupies: no resampling blur
+                w = max(8, min(int(width), 12000))
+                h = max(8, min(int(height), 12000))
+                m = fitz.Matrix((w - 0.01) / page.rect.width, (h - 0.01) / page.rect.height)
+            else:
+                scale = max(0.05, min(float(scale), 6.0))
+                m = fitz.Matrix(scale, scale)
+            pix = page.get_pixmap(matrix=m, alpha=False)
             return pix.tobytes("png")
 
     def export(self):

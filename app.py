@@ -87,7 +87,8 @@ def api_open():
 
 @app.get("/api/page/<int:pno>.png")
 def api_page(pno):
-    data = editor.render(pno, request.args.get("scale", 1.5, type=float))
+    a = request.args
+    data = editor.render(pno, a.get("scale", 1.5, type=float), a.get("w", type=int), a.get("h", type=int))
     resp = Response(data, mimetype="image/png")
     resp.headers["Cache-Control"] = "private, max-age=3600"
     return resp

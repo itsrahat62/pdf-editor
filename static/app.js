@@ -32,6 +32,32 @@ const S = {
 };
 
 // ================================================================== helpers
+/** Page size in whole screen pixels, so the page image is shown 1:1 (sharp). */
+function pageBox(i) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const p = S.state.pages[i];
+  const W = Math.max(8, Math.round(p.w * S.zoom * dpr));
+  const H = Math.max(8, Math.round(p.h * S.zoom * dpr));
+  return { W, H, cssW: W / dpr, cssH: H / dpr };
+}
+
+function sizePage(pg) {
+  const b = pageBox(pg._index);
+  pg.style.width = b.cssW + "px";
+  pg.style.height = b.cssH + "px";
+}
+
+/** Keep every page on the screen's pixel grid; a half-pixel offset blurs the image. */
+function snapPages() {
+  const dpr = window.devicePixelRatio || 1;
+  for (const pg of S.pageEls) {
+    pg.style.transform = "";
+    const r = pg.getBoundingClientRect();
+    const fx = ((r.left * dpr) % 1 + 1) % 1, fy = ((r.top * dpr) % 1 + 1) % 1;
+    if (fx > 0.01 || fy > 0.01) pg.style.transform = "translate(" + (-fx / dpr) + "px," + (-fy / dpr) + "px)";
+  }
+}
+
 async function api(path, opts) {
   const r = await fetch(path, opts);
   let data = null;
@@ -304,8 +330,7 @@ function buildPages() {
   S.state.pages.forEach((p, i) => {
     const pg = el("div", "page");
     pg._index = i;
-    pg.style.width = p.w * S.zoom + "px";
-    pg.style.height = p.h * S.zoom + "px";
+    sizePage(pg);
     const img = el("img");
     img.alt = "";
     img.draggable = false;
@@ -318,9 +343,10 @@ function buildPages() {
     observer.observe(pg);
   });
   buildThumbs();
+  requestAnimationFrame(snapPages);
 }
 
-function pageKey(i) { return S.docId + ":" + S.pageVer[i] + ":" + S.zoom; }
+function pageKey(i) { return S.docId + ":" + S.pageVer[i] + ":" + S.zoom + ":" + (window.devicePixelRatio || 1); }
 
 function loadPage(i, force) {
   const pg = S.pageEls[i];
@@ -328,7 +354,8 @@ function loadPage(i, force) {
   const key = pageKey(i);
   if (pg._key === key && !force) return pg._loading || Promise.resolve();
   pg._key = key;
-  const url = "/api/page/" + i + ".png?scale=" + (S.zoom * DPR).toFixed(3) + "&v=" + encodeURIComponent(key);
+  const pb = pageBox(i);
+  const url = "/api/page/" + i + ".png?w=" + pb.W + "&h=" + pb.H + "&v=" + encodeURIComponent(key);
   const pImg = new Promise((res) => {
     const pre = new Image();
     pre.onload = pre.onerror = () => { if (pg._key === key) pg._img.src = url; res(); };
@@ -1624,13 +1651,13 @@ async function setZoom(z) {
   const ratio = main.scrollHeight ? main.scrollTop / main.scrollHeight : 0;
   S.zoom = Math.max(0.3, Math.min(4, z));
   S.pageEls.forEach((pg, i) => {
-    pg.style.width = S.state.pages[i].w * S.zoom + "px";
-    pg.style.height = S.state.pages[i].h * S.zoom + "px";
+    sizePage(pg);
     drawLayer(pg);
     if (pg._visible) loadPage(i);
   });
   main.scrollTop = ratio * main.scrollHeight;
   syncButtons();
+  requestAnimationFrame(snapPages);
 }
 
 function syncKb(m) {
@@ -1700,6 +1727,15 @@ function init() {
   }, true);
 
   $("main").addEventListener("scroll", updateCurrentPage, { passive: true });
+  let resizeTimer = null;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (!S.state || !S.state.open) return;
+      S.pageEls.forEach((pg) => { sizePage(pg); if (pg._visible) loadPage(pg._index); });
+      snapPages();
+    }, 150);
+  });
   window.addEventListener("keydown", (ev) => {
     const k = ev.key.toLowerCase();
     const typing = ev.target.closest && ev.target.closest("input, textarea, select, [contenteditable=true]");

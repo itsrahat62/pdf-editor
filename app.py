@@ -254,6 +254,59 @@ def api_fonts_online():
         raise EditError("NO_INTERNET")
 
 
+@app.get("/api/fonts/missing")
+def api_fonts_missing():
+    return jsonify({"missing": editor.missing_fonts() if editor.doc is not None else []})
+
+
+FONT_JOBS = {}
+
+
+def _font_job(job_id, family):
+    job = FONT_JOBS[job_id]
+
+    def progress(pct):
+        job["percent"] = pct
+
+    try:
+        saved = font_online.fetch(family, progress)
+        fonts.rebuild()
+        editor.forget_fonts()
+        names = set()
+        for p in saved:
+            for e in fonts._scan_file(p):
+                names.add(e["family"])
+        job.update(state="done", percent=100, added=sorted(names))
+    except font_online.Offline:
+        job.update(state="error", error="NO_INTERNET")
+    except font_online.NotFound:
+        job.update(state="error", error="NOT_FOUND")
+    except Exception as e:
+        job.update(state="error", error=str(e) or e.__class__.__name__)
+
+
+@app.post("/api/fonts/online/start")
+def api_fonts_online_start():
+    family = _json().get("family", "")
+    if not family:
+        raise EditError("No font name was given.")
+    job_id = "%d" % (len(FONT_JOBS) + 1)
+    FONT_JOBS[job_id] = {"state": "running", "percent": 0, "family": family}
+    threading.Thread(target=_font_job, args=(job_id, family), daemon=True).start()
+    return jsonify({"job": job_id})
+
+
+@app.get("/api/fonts/online/job/<job_id>")
+def api_fonts_online_job(job_id):
+    job = FONT_JOBS.get(job_id)
+    if job is None:
+        raise EditError("Unknown download.")
+    out = dict(job)
+    if job["state"] == "done":
+        out["families"] = fonts.families()
+    return jsonify(out)
+
+
 @app.post("/api/fonts/online/get")
 def api_fonts_online_get():
     family = _json().get("family", "")

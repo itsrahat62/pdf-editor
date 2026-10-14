@@ -201,34 +201,79 @@ def _resolve(family):
     return None, None
 
 
-def fetch(family):
-    """Download a family into the user font folder. Returns the saved file paths."""
+def _get_progress(url, report, timeout=60):
+    """Download with progress: report(bytes_now, total_or_None)."""
+    req = urllib.request.Request(url, headers=UA)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=ssl.create_default_context()) as r:
+            total = r.headers.get("Content-Length")
+            total = int(total) if total and total.isdigit() else None
+            chunks, got = [], 0
+            report(0, total)
+            while True:
+                b = r.read(65536)
+                if not b:
+                    break
+                chunks.append(b)
+                got += len(b)
+                report(got, total)
+            return b"".join(chunks)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            raise NotFound(url)
+        raise
+    except (urllib.error.URLError, socket.timeout, OSError) as e:
+        if not online():
+            raise Offline()
+        raise e
+
+
+def fetch(family, progress=None):
+    """Download a family into the user font folder. Returns the saved file paths.
+    progress(percent) is called while downloading."""
     if not online():
         raise Offline()
     kind, key = _resolve(family)
     if kind is None:
         raise NotFound(family)
-    saved = []
     if kind == "bangla":
-        for fn in BANGLA[key]:
-            saved.append(_save(fn, _get(BANGLA_BASE + urllib.request.quote(fn))))
-        return saved
-    listing = json.loads(_get(GOOGLE_API + "/contents/" + key))
-    files = [f for f in listing if f["name"].lower().endswith((".ttf", ".otf"))]
-    if not files:
-        static = next((f for f in listing if f["name"] == "static" and f["type"] == "dir"), None)
-        if static:
-            files = [f for f in json.loads(_get(static["url"])) if f["name"].lower().endswith(".ttf")]
-    for f in files:
-        data = _get(f["download_url"])
-        if "[" in f["name"]:
+        plan = [(fn, BANGLA_BASE + urllib.request.quote(fn), None) for fn in BANGLA[key]]
+    else:
+        listing = json.loads(_get(GOOGLE_API + "/contents/" + key))
+        files = [f for f in listing if f["name"].lower().endswith((".ttf", ".otf"))]
+        if not files:
+            static = next((f for f in listing if f["name"] == "static" and f["type"] == "dir"), None)
+            if static:
+                files = [f for f in json.loads(_get(static["url"])) if f["name"].lower().endswith(".ttf")]
+        plan = [(f["name"], f["download_url"], f.get("size")) for f in files]
+    if not plan:
+        raise NotFound(family)
+
+    sizes = [size for _, _, size in plan]
+    done = [0] * len(plan)
+
+    def report_for(i):
+        def report(got, total):
+            if total and not sizes[i]:
+                sizes[i] = total
+            done[i] = got
+            if progress:
+                known = [x for x in sizes if x]
+                whole = sum(known) + (len(plan) - len(known)) * (sum(known) / len(known) if known else 1)
+                progress(min(99, int(100 * sum(done) / max(1, whole))))
+        return report
+
+    saved = []
+    for i, (name, url, _) in enumerate(plan):
+        data = _get_progress(url, report_for(i))
+        if "[" in name:
             try:
-                for name, inst in _static_instances(data, f["name"]):
-                    saved.append(_save(name, inst))
+                for iname, inst in _static_instances(data, name):
+                    saved.append(_save(iname, inst))
                 continue
             except Exception:
                 pass
-        saved.append(_save(f["name"], data))
-    if not saved:
-        raise NotFound(family)
+        saved.append(_save(name, data))
+    if progress:
+        progress(100)
     return saved

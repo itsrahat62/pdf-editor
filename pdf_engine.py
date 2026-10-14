@@ -377,7 +377,7 @@ class PdfEditor(FeaturesMixin):
             if keep is not None:
                 pieces = [parts[k] for k in keep]
             else:
-                pieces = self._split_field(ftext, where, order, lines)
+                pieces = self._split_field(page, ftext, where, order, lines)
             if not pieces:
                 continue
             for k, li in enumerate(order):
@@ -468,8 +468,63 @@ class PdfEditor(FeaturesMixin):
             best, area = (i, k), a
         return best
 
-    @staticmethod
-    def _split_field(ftext, where, order, lines):
+    def _split_by_width(self, page, ftext, order, lines):
+        """Cut the words into len(order) consecutive pieces whose printed widths
+        best match the widths of the drawn lines."""
+        words = ftext.split()
+        n = len(order)
+        if n < 2 or len(words) < n or len(words) > 400:
+            return None
+        sp = lines[order[0]]["spans"][0]
+        try:
+            font = self.font_chain(page, sp["font"], sp["flags"])[0].font
+        except Exception:
+            return None
+        size = sp["size"]
+        ww = [font.text_length(w, fontsize=size) for w in words]
+        space = font.text_length(" ", fontsize=size) or size * 0.25
+        if not all(ww):
+            return None
+
+        def length(ln):
+            c, s_ = ln["dir"][0], ln["dir"][1]
+            b = ln["bbox"]
+            v = [x * c + y * s_ for x in (b[0], b[2]) for y in (b[1], b[3])]
+            return max(v) - min(v)
+
+        target = [max(1.0, length(lines[i])) for i in order]
+        pre = [0.0]
+        for w in ww:
+            pre.append(pre[-1] + w)
+
+        def width(a, b):
+            return pre[b] - pre[a] + space * (b - a - 1)
+
+        # the measured widths ignore Bangla ligatures; compare proportions
+        scale = sum(target) / max(1.0, width(0, len(words)))
+        m = len(words)
+        inf = float("inf")
+        cost = [[inf] * (m + 1) for _ in range(n + 1)]
+        back = [[0] * (m + 1) for _ in range(n + 1)]
+        cost[0][0] = 0.0
+        for i in range(1, n + 1):
+            for j in range(i, m - (n - i) + 1):
+                for k in range(i - 1, j):
+                    if cost[i - 1][k] == inf:
+                        continue
+                    c = cost[i - 1][k] + abs(width(k, j) * scale - target[i - 1]) / target[i - 1]
+                    if c < cost[i][j]:
+                        cost[i][j], back[i][j] = c, k
+        if cost[n][m] == inf:
+            return None
+        cuts, j = [], m
+        for i in range(n, 0, -1):
+            k = back[i][j]
+            cuts.append((k, j))
+            j = k
+        return [" ".join(words[a:b]) for a, b in reversed(cuts)]
+
+    def _split_field(self, page, ftext, where, order, lines):
         """Split a field's text into one piece per drawn line."""
         n = len(order)
         parts = [t.strip() for t in ftext.split("\n") if t.strip()]
@@ -506,12 +561,16 @@ class PdfEditor(FeaturesMixin):
                     if len(mine) == 1:
                         out.append(parts[p])
                         continue
-                    sub = PdfEditor._split_field(ftext[a:b], where[a:b], mine, lines)
+                    sub = self._split_field(page, ftext[a:b], where[a:b], mine, lines)
                     if not sub:
                         break
                     out.extend(sub)
                 else:
                     return out
+        # measure: the words that fill each drawn line best, using the real font
+        best = self._split_by_width(page, ftext, order, lines)
+        if best:
+            return best
         # the glyph text is unreadable but keeps word gaps: match word counts
         counts = [len(" ".join(s["text"] for s in lines[i]["spans"]).split()) for i in order]
         words = ftext.split()

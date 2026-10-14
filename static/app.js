@@ -266,6 +266,8 @@ function setDocument(st) {
   $("empty").classList.add("hidden");
   $("thumbs").classList.remove("hidden");
   S.zoom = Math.min(fitZoom(), 1.5);
+  S.dismissedFonts = new Set();
+  checkMissingFonts();
   buildPages();
   syncButtons();
   $("main").scrollTop = 0;
@@ -992,7 +994,7 @@ function showFontBar() {
         const get = el("button", "getfont", "Get it online");
         get.title = "Download “" + sp.name + "” from the internet";
         get.onmousedown = (ev) => ev.preventDefault();
-        get.onclick = () => getFontOnline(sp.name);
+        get.onclick = () => { const slot = el("span"); get.replaceWith(slot); getFontOnline(sp.name, slot); };
         item.appendChild(get);
       }
       bar.appendChild(item);
@@ -1115,17 +1117,84 @@ function fontError(msg) {
   return msg;
 }
 
-async function getFontOnline(name) {
-  busy(true, "Downloading “" + name + "”…");
-  try {
-    const r = await post("/api/fonts/online/get", { family: name });
-    setFamilies(r.families);
+/** Download a font with a progress bar shown in `slot` (replaces its content). */
+async function downloadFont(name, slot) {
+  const prog = el("span", "prog");
+  const bar = el("span", "bar");
+  const fill = el("i");
+  bar.appendChild(fill);
+  const pct = el("span", "pct", "Starting…");
+  prog.append(bar, pct);
+  slot.innerHTML = "";
+  slot.appendChild(prog);
+  const fail = (msg) => {
+    prog.classList.add("fail");
+    pct.textContent = fontError(msg);
+    bar.remove();
+    const again = el("button", "btn", "Try again");
+    again.onclick = () => downloadFont(name, slot);
+    slot.appendChild(again);
+    return false;
+  };
+  let job;
+  try { job = (await post("/api/fonts/online/start", { family: name })).job; } catch (e) { return fail(e.message); }
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 250));
+    let st;
+    try { st = await api("/api/fonts/online/job/" + job); } catch (e) { return fail(e.message); }
+    fill.style.width = (st.percent || 0) + "%";
+    if (st.state === "running") { pct.textContent = "Downloading " + (st.percent || 0) + "%"; continue; }
+    if (st.state === "error") return fail(st.error);
+    fill.style.width = "100%";
+    prog.classList.add("done");
+    pct.textContent = "✓ Complete";
+    setFamilies(st.families);
     S.fontGen = (S.fontGen || 0) + 1;
-    toast("Font installed: " + r.added.join(", "), "ok");
     await refreshFontsOnPages();
-  } catch (e) {
-    toast(fontError(e.message), e.message === "NO_INTERNET" ? "warn" : "err", 8000);
-  } finally { busy(false); }
+    toast("Font installed and in use: " + st.added.join(", "), "ok");
+    return true;
+  }
+}
+
+async function getFontOnline(name, slot) {
+  if (!slot) { slot = el("span"); $("fontbar").appendChild(slot); }
+  const ok = await downloadFont(name, slot);
+  if (ok) setTimeout(checkMissingFonts, 1500);
+}
+
+/** Banner at the top listing fonts the PDF uses that this PC does not have. */
+async function checkMissingFonts() {
+  const box = $("fontalert");
+  let list = [];
+  try { list = (await api("/api/fonts/missing")).missing; } catch (e) { /* ignore */ }
+  S.dismissedFonts = S.dismissedFonts || new Set();
+  list = list.filter((m) => !S.dismissedFonts.has(m.name));
+  box.innerHTML = "";
+  if (!list.length) { box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
+  const head = el("div", "fa-head");
+  head.innerHTML = "<svg><use href='#i-font'/></svg>";
+  head.appendChild(el("b", null, list.length > 1 ? "These fonts are not on this PC" : "This font is not on this PC"));
+  head.appendChild(el("span", "fa-sub", "— download it so edited text uses the same font. (এই ফন্ট কম্পিউটারে নেই — অনলাইন থেকে ডাউনলোড করুন)"));
+  const x = el("button", "x fa-x", "✕");
+  x.title = "Hide";
+  x.onclick = () => { list.forEach((m) => S.dismissedFonts.add(m.name)); box.classList.add("hidden"); };
+  head.appendChild(x);
+  box.appendChild(head);
+  for (const m of list) {
+    const row = el("div", "fa-row");
+    row.appendChild(el("span", "fa-name", m.name));
+    row.appendChild(el("span", "fa-using", "now shown with: " + m.using));
+    const slot = el("span");
+    const b = el("button", "btn primary", "Download");
+    b.onclick = async () => {
+      const ok = await downloadFont(m.name, slot);
+      if (ok) setTimeout(checkMissingFonts, 4000);
+    };
+    slot.appendChild(b);
+    row.appendChild(slot);
+    box.appendChild(row);
+  }
 }
 
 async function refreshFontsOnPages() {
@@ -1160,21 +1229,12 @@ async function fontsDialog() {
         row.appendChild(el("span", null, name));
         const b = el("button", "btn" + (installed ? "" : " primary"), installed ? "Installed" : "Download");
         b.disabled = installed;
+        const slot = el("span");
         b.onclick = async () => {
-          b.disabled = true; b.textContent = "Downloading…";
-          try {
-            const r = await post("/api/fonts/online/get", { family: name });
-            setFamilies(r.families);
-            S.fontGen = (S.fontGen || 0) + 1;
-            b.textContent = "Installed";
-            toast("Font installed: " + r.added.join(", "), "ok");
-            refreshFontsOnPages();
-          } catch (e) {
-            b.disabled = false; b.textContent = "Download";
-            toast(fontError(e.message), "warn", 8000);
-          }
+          if (await downloadFont(name, slot)) setTimeout(checkMissingFonts, 1500);
         };
-        row.appendChild(b);
+        slot.appendChild(b);
+        row.appendChild(slot);
         results.appendChild(row);
       });
     } catch (e) {

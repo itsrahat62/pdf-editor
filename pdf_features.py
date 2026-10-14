@@ -11,7 +11,7 @@ import pymupdf as fitz
 
 import textmap
 from errors import EditError
-from font_manager import FLAG_BOLD, FLAG_ITALIC, is_complex
+from font_manager import FLAG_BOLD, FLAG_ITALIC, is_complex, strip_subset
 
 ANNOT_NAMES = {
     fitz.PDF_ANNOT_TEXT: "note", fitz.PDF_ANNOT_HIGHLIGHT: "highlight", fitz.PDF_ANNOT_UNDERLINE: "underline",
@@ -48,6 +48,26 @@ class FeaturesMixin:
                 raise EditError(str(e) or e.__class__.__name__)
             self.version += 1
             return result
+
+    def missing_fonts(self):
+        """Fonts the PDF uses that can be neither taken from the file nor found on
+        this PC, so edited text would come out in a look-alike font."""
+        with self.lock:
+            self._need()
+            out = {}
+            for page in self.doc:
+                for f in page.get_fonts(full=True):
+                    name = f[3]
+                    base = re.sub(r"[-, ]*(Regular|Normal|Roman)$", "", strip_subset(name))
+                    if not base or base in out:
+                        continue
+                    try:
+                        fc = self.font_chain(page, name, 0)[0]
+                    except Exception:
+                        continue
+                    if fc.kind in ("similar", "substitute"):
+                        out[base] = {"name": base, "using": fc.label}
+            return list(out.values())
 
     def objects(self, pno):
         """Comments and form fields on a page."""

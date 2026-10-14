@@ -1,6 +1,6 @@
 ﻿; Inno Setup script - builds release\PDF-Editor-Setup.exe from dist\PDF Editor
 #define AppName "PDF Editor"
-#define AppVersion "1.1.1"
+#define AppVersion "1.1.2"
 #define AppExe "PDF Editor.exe"
 
 [Setup]

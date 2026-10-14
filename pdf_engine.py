@@ -475,6 +475,43 @@ class PdfEditor(FeaturesMixin):
         parts = [t.strip() for t in ftext.split("\n") if t.strip()]
         if len(parts) == n:
             return parts
+        if 1 < len(parts) < n:
+            # a part that was word-wrapped over several lines: first give every
+            # line to the part most of its letters came from, then split each part
+            spans_, at = [], 0
+            for chunk in ftext.split("\n"):
+                if chunk.strip():
+                    spans_.append((at, at + len(chunk)))
+                at += len(chunk) + 1
+            part_of = [None] * len(ftext)
+            for p, (a, b) in enumerate(spans_):
+                for k in range(a, b):
+                    part_of[k] = p
+            owner = []
+            for li in order:
+                votes = {}
+                for k, w in enumerate(where):
+                    if w == li and part_of[k] is not None:
+                        votes[part_of[k]] = votes.get(part_of[k], 0) + 1
+                owner.append(max(votes, key=votes.get) if votes else None)
+            for i in range(n):                       # lines without letters follow the line above
+                if owner[i] is None:
+                    owner[i] = owner[i - 1] if i else 0
+            for i in range(1, n):                    # keep the order
+                owner[i] = max(owner[i], owner[i - 1])
+            if sorted(set(owner)) == list(range(len(parts))):
+                out = []
+                for p, (a, b) in enumerate(spans_):
+                    mine = [order[i] for i in range(n) if owner[i] == p]
+                    if len(mine) == 1:
+                        out.append(parts[p])
+                        continue
+                    sub = PdfEditor._split_field(ftext[a:b], where[a:b], mine, lines)
+                    if not sub:
+                        break
+                    out.extend(sub)
+                else:
+                    return out
         # the glyph text is unreadable but keeps word gaps: match word counts
         counts = [len(" ".join(s["text"] for s in lines[i]["spans"]).split()) for i in order]
         words = ftext.split()

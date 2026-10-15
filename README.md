@@ -16,6 +16,8 @@ Get `PDF-Editor-Setup.exe` from the [Releases](../../releases) page and run it. 
 - Works with report-generated Bangla PDFs (JasperReports / OpenPDF government forms) whose text is stored as *ActualText*.
 - **Add text**, **Text box** (paragraph that wraps), **Move** a line, **Image**, **Signature** (draw or type, saved for next time), **Erase** (really removes what is under the box).
 - **Find & Replace** across all pages, Bangla included.
+- **Edit several lines at once** — in *Edit text*, drag over lines with the mouse (like selecting text) or Ctrl/Shift-click lines; every selected line opens for editing, each in its own font. `↑` / `↓` move between them, `Enter` applies all, `Ctrl+A` takes every line of the page.
+- Clicking or selecting never changes the page by itself: lines that were not typed in stay exactly as they were.
 - Change font, size, colour, bold/italic.
 
 **Bangla typing**
@@ -25,6 +27,7 @@ Get `PDF-Editor-Setup.exe` from the [Releases](../../releases) page and run it. 
 **Fonts**
 - Every font installed on the PC, plus bundled open fonts.
 - **Fonts → download** free fonts from the internet: the Bangla fonts Nikosh, NikoshBAN, SolaimanLipi, Kalpurush, Siyam Rupali, … and the whole Google Fonts library. Without internet the app tells you there is no connection.
+- When a PDF uses a font this PC does not have, a message at the top offers to **Download** it, shows the progress in per cent and then *Complete*; the font is used right away.
 - **+ Font** adds a `.ttf` / `.otf` file from the PC.
 
 **Comment**
@@ -39,6 +42,7 @@ Get `PDF-Editor-Setup.exe` from the [Releases](../../releases) page and run it. 
 - Password-protect the downloaded PDF (AES-256).
 - Export pages as PNG/JPG images; create a PDF from images.
 - Document properties; print; undo / redo.
+- Warns before closing the app or opening another PDF when changes have not been downloaded yet.
 
 ## Keyboard shortcuts
 

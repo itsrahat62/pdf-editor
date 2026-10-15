@@ -73,6 +73,14 @@ class PdfEditor(FeaturesMixin):
             self.undo_stack, self.redo_stack = [], []
             self._emb_cache = {}
             self.version += 1
+            self.saved_version = self.version
+
+    def dirty(self):
+        """True when there are changes that have not been downloaded/saved."""
+        return self.doc is not None and bool(self.undo_stack) and self.version != getattr(self, "saved_version", -1)
+
+    def mark_saved(self):
+        self.saved_version = self.version
 
     def _need(self):
         if self.doc is None:
@@ -89,6 +97,7 @@ class PdfEditor(FeaturesMixin):
                 "boot": BOOT_ID,
                 "pages": [{"w": p.rect.width, "h": p.rect.height} for p in self.doc],
                 "can_undo": bool(self.undo_stack),
+                "dirty": self.dirty(),
                 "can_redo": bool(self.redo_stack),
             }
 

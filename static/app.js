@@ -230,6 +230,15 @@ async function formDialog(o) {
 async function openFiles(files, password) {
   if (!files || !files.length) return;
   await finishEdit();
+  if (!password) {
+    let st = null;
+    try { st = await api("/api/state"); } catch (e) { /* ignore */ }
+    if (st && st.dirty && !(await dialog({
+      title: "Open another PDF?",
+      message: "Your changes to “" + st.name + "” have not been downloaded yet. They will be lost.",
+      ok: "Open anyway", danger: true,
+    }))) return;
+  }
   const fd = new FormData();
   for (const f of files) fd.append("file", f);
   if (password) fd.append("password", password);
@@ -538,7 +547,9 @@ function wireLayer(pg) {
     if (ev.target.closest(".editor, .widget, .annot")) return;
     if (S.tool === "edit") {
       const ln = ev.target._line;
-      if (ln) startEdit(pg, ln);
+      if (ln && (ev.ctrlKey || ev.shiftKey) && S.edit && S.edit.pg === pg &&
+          (S.edit.mode === "line" || S.edit.mode === "multi")) addLineToEdit(ln);
+      else if (ln) startEdit(pg, ln);
     } else if (S.tool === "add") {
       const [x, y] = ptOf(pg, ev);
       startAdd(pg, x, y);
@@ -551,7 +562,9 @@ function wireLayer(pg) {
   layer.addEventListener("pointerdown", (ev) => {
     if (ev.button !== 0 || ev.target.closest(".editor, .widget, .annot")) return;
     const t = S.tool;
-    if (t === "move") {
+    if (t === "edit") {
+      selectLinesByDrag(pg, ev);
+    } else if (t === "move") {
       const ln = ev.target._line;
       if (ln) { ev.preventDefault(); dragLine(pg, ln, ev); }
     } else if (RECT_TOOLS.has(t) || LINE_TOOLS.has(t) || t === "drawing") {
@@ -670,6 +683,60 @@ async function pageChanged(pno, st) {
   syncButtons();
 }
 
+/** Edit tool: drag a box over several lines to edit them all at once.
+    A plain click still edits the single line under the mouse. */
+function selectLinesByDrag(pg, ev) {
+  const p0 = ptOf(pg, ev);
+  let rb = null, picked = [];
+  const lineDivs = Array.from(pg._layer.querySelectorAll(".line"));
+  // like selecting text: every line from the one where the drag starts to the one
+  // where it ends (in the same column) is selected
+  const lineAt = (p) => {
+    let best = null, dist = Infinity;
+    for (const d of lineDivs) {
+      const b = d._line.bbox;
+      if (p[1] < b[1] - 2 || p[1] > b[3] + 2) continue;
+      const dx = p[0] < b[0] ? b[0] - p[0] : p[0] > b[2] ? p[0] - b[2] : 0;
+      if (dx < dist) { dist = dx; best = d._line; }
+    }
+    return dist < 40 ? best : null;
+  };
+  const startLine = lineAt(p0);
+  const move = (e) => {
+    const p = ptOf(pg, e);
+    if (!rb) {
+      if (Math.abs(p[0] - p0[0]) * S.zoom < 6 && Math.abs(p[1] - p0[1]) * S.zoom < 6) return;
+      rb = true;
+      window.getSelection().removeAllRanges();
+    }
+    const endLine = lineAt(p);
+    const ends = [startLine, endLine].filter(Boolean);
+    const y0 = Math.min(p0[1], p[1]), y1 = Math.max(p0[1], p[1]);
+    // the column: the horizontal extent of the first and last line, or of the drag
+    let x0 = Math.min(p0[0], p[0]), x1 = Math.max(p0[0], p[0]);
+    for (const l of ends) { x0 = Math.min(x0, l.bbox[0]); x1 = Math.max(x1, l.bbox[2]); }
+    picked = [];
+    for (const d of lineDivs) {
+      const b = d._line.bbox, cy = (b[1] + b[3]) / 2;
+      const inRows = ends.includes(d._line) || (cy >= y0 && cy <= y1);
+      const hit = inRows && b[0] < x1 && b[2] > x0;
+      d.classList.toggle("sel", hit);
+      if (hit) picked.push(d._line);
+    }
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    lineDivs.forEach((d) => d.classList.remove("sel"));
+    if (!rb) return;                       // a click: handled by the click event
+    S.suppressClick = true;
+    setTimeout(() => { S.suppressClick = false; }, 0);
+    if (picked.length) startMultiEdit(pg, picked);
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+
 function dragLine(pg, ln, ev) {
   const z = S.zoom, p0 = ptOf(pg, ev);
   const g = el("div", "moveghost");
@@ -767,16 +834,24 @@ function makeEditor(pg, wrap) {
   ed.contentEditable = "true";
   ed.spellcheck = false;
   ed.addEventListener("keydown", (ev) => {
-    const multi = S.edit && (S.edit.mode === "add" || S.edit.mode === "textbox");
-    if (ev.key === "Enter" && (!multi || ev.ctrlKey) && !(multi && ev.shiftKey)) {
-      ev.preventDefault();
-      finishEdit();
-    } else if (ev.key === "Enter" && multi) {
+    // Enter applies; a new line is Shift+Enter in "Add text" and Enter in a text box
+    const mode = S.edit && S.edit.mode;
+    const newLine = ev.key === "Enter" && ((mode === "add" && ev.shiftKey) || (mode === "textbox" && !ev.ctrlKey));
+    if (newLine) {
       ev.preventDefault();
       document.execCommand("insertText", false, "\n");
+    } else if (ev.key === "Enter") {
+      ev.preventDefault();
+      finishEdit();
     } else if (ev.key === "Escape") {
       ev.preventDefault();
       cancelEdit();
+    } else if (S.edit && S.edit.mode === "multi" && (ev.key === "ArrowUp" || ev.key === "ArrowDown" || ev.key === "Tab")) {
+      // move between the selected lines
+      ev.preventDefault();
+      const rows = S.edit.rows, k = +ed.dataset.row;
+      const next = ev.key === "ArrowUp" || (ev.key === "Tab" && ev.shiftKey) ? k - 1 : k + 1;
+      if (next >= 0 && next < rows.length) focusEnd(rows[next].ed);
     }
     ev.stopPropagation();
   });
@@ -787,6 +862,7 @@ function makeEditor(pg, wrap) {
     document.execCommand("insertText", false, t);
   });
   ed.addEventListener("drop", (ev) => ev.preventDefault());
+  ed.addEventListener("focus", () => { if (S.edit) S.edit.lastFocus = ed; });
   pg._layer.appendChild(ed);
   return ed;
 }
@@ -798,9 +874,8 @@ function focusEnd(ed) {
   sel.collapseToEnd();
 }
 
-async function startEdit(pg, line) {
-  await finishEdit();
-  if (S.tool !== "edit") return;
+/** An editing box over one line of the page, showing exactly its text. */
+function makeLineEditor(pg, line) {
   const z = S.zoom, b = line.bbox;
   const straight = Math.abs(line.dir[0] - 1) < 1e-3 && Math.abs(line.dir[1]) < 1e-3;
   const ed = makeEditor(pg);
@@ -813,10 +888,78 @@ async function startEdit(pg, line) {
   ed.style.minWidth = (straight ? (b[2] - b[0]) : 40) * z + 4 + "px";
   ed.style.background = hex(sampleColor(pg, b[0] - 1.5, b[1] - 1.5));
   line.spans.forEach((sp, i) => {
-    const s = el("span", null, sp.ansi ? BijoyAnsi.toUnicode(sp.text) : sp.text);
+    const s = el("span", null, shownText(sp));
     s.dataset.i = i;
     ed.appendChild(s);
   });
+  return ed;
+}
+
+function shownText(sp) { return sp.ansi ? BijoyAnsi.toUnicode(sp.text) : sp.text; }
+
+/** The line editors of the active edit: [{line, ed}]. */
+function editRows(e) {
+  if (!e) return [];
+  if (e.mode === "multi") return e.rows;
+  if (e.mode === "line") return [{ line: e.line, ed: e.ed }];
+  return [];
+}
+
+function editorsOf(e) { return e.mode === "multi" ? e.rows.map((r) => r.ed) : [e.ed]; }
+
+/** Edit several lines at once; each keeps its own font, size and colour. */
+async function startMultiEdit(pg, lines) {
+  await finishEdit();
+  if (S.tool !== "edit" || !lines.length) return;
+  if (lines.length === 1) { startEdit(pg, lines[0]); return; }
+  lines = lines.slice().sort((a, b) => (a.bbox[1] - b.bbox[1]) || (a.bbox[0] - b.bbox[0]));
+  const rows = lines.map((line) => ({ line, ed: makeLineEditor(pg, line) }));
+  S.edit = { mode: "multi", pg, rows, ov: {} };
+  rows.forEach((r, k) => { r.ed.dataset.row = k; r.ed.classList.add("multi"); });
+  const sp0 = lines[0].spans[0];
+  $("font").value = "";
+  $("font").placeholder = lines.length + " lines — each keeps its font";
+  $("size").value = +sp0.size.toFixed(2);
+  $("color").value = hex(sp0.color);
+  setToggle("bold", false);
+  setToggle("italic", false);
+  showFontBar();
+  stylePreview();
+  focusEnd(rows[0].ed);
+}
+
+/** Ctrl/Shift + click: put one more line into the edit (or take it out again). */
+function addLineToEdit(line) {
+  const e = S.edit;
+  if (e.mode === "line") {
+    e.mode = "multi";
+    e.rows = [{ line: e.line, ed: e.ed }];
+    e.ed.classList.add("multi");
+    delete e.line; delete e.ed;
+  }
+  const have = e.rows.findIndex((r) => r.line === line);
+  if (have >= 0) {
+    if (e.rows.length === 1) return;
+    e.rows[have].ed.remove();          // clicked again: unselect it
+    e.rows.splice(have, 1);
+  } else {
+    const ed = makeLineEditor(e.pg, line);
+    ed.classList.add("multi");
+    e.rows.push({ line, ed });
+  }
+  e.rows.sort((a, b) => (a.line.bbox[1] - b.line.bbox[1]) || (a.line.bbox[0] - b.line.bbox[0]));
+  e.rows.forEach((r, k) => { r.ed.dataset.row = k; });
+  $("font").placeholder = e.rows.length + " lines — each keeps its font";
+  showFontBar();
+  stylePreview();
+  const added = e.rows.find((r) => r.line === line);
+  focusEnd((added || e.rows[0]).ed);
+}
+
+async function startEdit(pg, line) {
+  await finishEdit();
+  if (S.tool !== "edit") return;
+  const ed = makeLineEditor(pg, line);
   S.edit = { mode: "line", pg, line, ed, ov: {} };
   const sp0 = line.spans[0];
   $("font").value = "";
@@ -933,8 +1076,12 @@ function stylePreview() {
     return;
   }
   const ov = e.ov;
-  e.ed.querySelectorAll("span[data-i]").forEach((s) => {
-    const sp = e.line.spans[+s.dataset.i];
+  for (const row of editRows(e)) styleLineEditor(e, row.line, row.ed, ov, z);
+}
+
+function styleLineEditor(e, line, ed, ov, z) {
+  ed.querySelectorAll("span[data-i]").forEach((s) => {
+    const sp = line.spans[+s.dataset.i];
     if (!sp) return;
     const bold = ov.bold !== undefined ? ov.bold : !!(sp.flags & FLAG_BOLD);
     const italic = ov.italic !== undefined ? ov.italic : !!(sp.flags & FLAG_ITALIC);
@@ -972,9 +1119,9 @@ function showFontBar() {
   if (!e) { bar.classList.add("hidden"); return; }
   bar.classList.remove("hidden");
   bar.innerHTML = "";
-  if (e.mode === "line") {
+  if (e.mode === "line" || e.mode === "multi") {
     const seen = new Set();
-    e.line.spans.forEach((sp) => {
+    editRows(e).flatMap((r) => r.line.spans).forEach((sp) => {
       const key = sp.font + "|" + sp.flags;
       if (seen.has(key)) return;
       seen.add(key);
@@ -1004,6 +1151,11 @@ function showFontBar() {
       "New text — choose the font, size and colour in the toolbar"));
   }
   const keys = el("span", "keys");
+  if (e.mode === "multi") {
+    keys.innerHTML = e.rows.length + " lines &nbsp; <kbd>↑</kbd><kbd>↓</kbd> move &nbsp; <kbd>Enter</kbd> apply all &nbsp; <kbd>Esc</kbd> cancel";
+    bar.appendChild(keys);
+    return;
+  }
   keys.innerHTML = e.mode === "line" ? "<kbd>Enter</kbd> apply &nbsp; <kbd>Esc</kbd> cancel"
     : "<kbd>Ctrl</kbd>+<kbd>Enter</kbd> apply &nbsp; <kbd>Enter</kbd> new line &nbsp; <kbd>Esc</kbd> cancel";
   if (e.mode === "add") keys.innerHTML = "<kbd>Enter</kbd> apply &nbsp; <kbd>Shift</kbd>+<kbd>Enter</kbd> new line &nbsp; <kbd>Esc</kbd> cancel";
@@ -1033,7 +1185,7 @@ function cancelEdit() {
   const e = S.edit;
   if (!e) return;
   S.edit = null;
-  e.ed.remove();
+  editorsOf(e).forEach((ed) => ed.remove());
   showFontBar();
 }
 
@@ -1050,10 +1202,17 @@ function finishEdit() {
 async function commit(e) {
   const pno = e.pg._index;
   let res;
-  e.ed.contentEditable = "false";
-  e.ed.classList.add("pending");
+  for (const ed of editorsOf(e)) { ed.contentEditable = "false"; ed.classList.add("pending"); }
   try {
-    if (e.mode === "add" || e.mode === "textbox") {
+    if (e.mode === "multi") {
+      const items = [];
+      for (const row of e.rows) {
+        const segs = lineSegs(row.line, row.ed, e.ov);
+        if (segs) items.push({ line: row.line, segs });
+      }
+      if (!items.length) return;          // nothing typed: the page stays exactly as it was
+      res = await post("/api/page/" + pno + "/edit_lines", { items, ov: e.ov });
+    } else if (e.mode === "add" || e.mode === "textbox") {
       const text = e.ed.innerText.replace(/ /g, " ").replace(/\n+$/, "");
       if (!text.trim()) { e.ed.remove(); return; }
       const st = currentStyle();
@@ -1063,26 +1222,31 @@ async function commit(e) {
         ? await post("/api/page/" + pno + "/add_text", Object.assign({ x: e.x, y: e.y }, base))
         : await post("/api/page/" + pno + "/textbox", Object.assign({ rect: e.rect }, base));
     } else {
-      const segs = collectSegs(e.ed);
-      const shown = (sp) => (sp.ansi ? BijoyAnsi.toUnicode(sp.text) : sp.text);
-      const same = !Object.keys(e.ov).length && e.line.spans.every((sp, i) => {
-        const sg = segs.filter((s) => s.src === i).map((s) => s.text).join("");
-        return sg === shown(sp);
-      });
-      if (same) { e.ed.remove(); return; }
-      for (const sg of segs) {
-        const sp = e.line.spans[sg.src];
-        const target = e.ov.family || (sp && sp.ansi ? sp.font : null);
-        if (sp && sp.ansi && !e.ov.family) sg.text = BijoyAnsi.toAnsi(sg.text);
-        else if (e.ov.family) sg.text = encodeFor(target, sg.text);
-      }
+      const segs = lineSegs(e.line, e.ed, e.ov);
+      if (!segs) return;                  // nothing typed: the page stays exactly as it was
       res = await post("/api/page/" + pno + "/edit", { line: e.line, segs, ov: e.ov });
     }
     await pageChanged(pno, res.state);
     reportFonts(res.result);
   } finally {
-    e.ed.remove();
+    editorsOf(e).forEach((ed) => ed.remove());
   }
+}
+
+/** What to send for one edited line, or null when it was not changed. */
+function lineSegs(line, ed, ov) {
+  const segs = collectSegs(ed);
+  const same = !Object.keys(ov).length && line.spans.every((sp, i) => {
+    const sg = segs.filter((s) => s.src === i).map((s) => s.text).join("");
+    return sg === shownText(sp);
+  });
+  if (same) return null;
+  for (const sg of segs) {
+    const sp = line.spans[sg.src];
+    if (sp && sp.ansi && !ov.family) sg.text = BijoyAnsi.toAnsi(sg.text);
+    else if (ov.family) sg.text = encodeFor(ov.family, sg.text);
+  }
+  return segs;
 }
 
 function reportFonts(result) {
@@ -1694,14 +1858,18 @@ async function onAction(a) {
 
 function styleChanged(prop) {
   const e = S.edit;
-  if (e && e.mode === "line") {
+  if (e && (e.mode === "line" || e.mode === "multi")) {
     const st = currentStyle();
     if (prop === "family") { if (st.family) e.ov.family = st.family; else delete e.ov.family; }
     else e.ov[prop] = st[prop];
     showFontBar();
   }
   stylePreview();
-  if (e) e.ed.focus();
+  if (e) {
+    const eds = editorsOf(e);
+    const last = eds.find((ed) => ed === e.lastFocus) || eds[0];
+    last.focus();
+  }
 }
 
 async function setZoom(z) {
@@ -1782,6 +1950,9 @@ function init() {
   document.addEventListener("mousedown", (ev) => {
     if (!S.edit) return;
     if (ev.target.closest(".editor, #toolbar, #ribbon, #fontbar, .statusbar, .overlay, #findPanel")) return;
+    // Ctrl / Shift + click on a line adds it to the lines being edited
+    if ((ev.ctrlKey || ev.shiftKey) && S.tool === "edit" && ev.target._line &&
+        (S.edit.mode === "line" || S.edit.mode === "multi")) return;
     if (ev.target.closest(".layer") && (S.tool === "add" || S.tool === "textbox")) S.suppressClick = true;
     finishEdit();
   }, true);
@@ -1803,6 +1974,10 @@ function init() {
     else if (ev.ctrlKey && k === "s") { ev.preventDefault(); save(); }
     else if (ev.ctrlKey && k === "p") { ev.preventDefault(); printDoc(); }
     else if (ev.ctrlKey && k === "f") { ev.preventDefault(); openFind(); }
+    else if (ev.ctrlKey && k === "a" && !typing && S.tool === "edit" && S.pageEls[S.cur] && S.pageEls[S.cur]._lines) {
+      ev.preventDefault();
+      startMultiEdit(S.pageEls[S.cur], S.pageEls[S.cur]._lines);
+    }
     else if (ev.ctrlKey && k === "z" && !ev.shiftKey && !typing) { ev.preventDefault(); undoRedo("undo"); }
     else if (ev.ctrlKey && (k === "y" || (k === "z" && ev.shiftKey)) && !typing) { ev.preventDefault(); undoRedo("redo"); }
     else if (ev.ctrlKey && (k === "=" || k === "+")) { ev.preventDefault(); setZoom(S.zoom * 1.2); }

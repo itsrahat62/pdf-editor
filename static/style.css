@@ -347,3 +347,8 @@ body.dragging #main { box-shadow: inset 0 0 0 3px var(--accent); }
 .prog.done .bar i { background: #2fbf71; }
 .prog.done .pct { color: #14693f; }
 .prog.fail .pct { color: var(--danger); font-weight: 500; }
+
+/* several lines selected for editing */
+.line.sel { background: rgba(0,120,215,.32); outline: 0; }
+.editor.multi { box-shadow: 0 2px 8px rgba(20,30,60,.18); }
+.editor.multi:focus { outline-width: 2.5px; box-shadow: 0 4px 14px rgba(20,30,60,.3); z-index: 9; }

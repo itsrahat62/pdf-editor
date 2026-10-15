@@ -107,6 +107,12 @@ def api_edit(pno):
     return _done(editor.edit_line(pno, d["line"], d.get("segs", []), d.get("ov"), d.get("move")))
 
 
+@app.post("/api/page/<int:pno>/edit_lines")
+def api_edit_lines(pno):
+    d = _json()
+    return _done(editor.edit_lines(pno, d.get("items", []), d.get("ov")))
+
+
 @app.post("/api/page/<int:pno>/add_text")
 def api_add_text(pno):
     d = _json()
@@ -360,8 +366,9 @@ def _download(data, name, mimetype):
 
 @app.get("/api/download")
 def api_download():
-    return _download(editor.export_protected(request.args.get("password") or None),
-                     _base() + "-edited.pdf", "application/pdf")
+    data = editor.export_protected(request.args.get("password") or None)
+    editor.mark_saved()
+    return _download(data, _base() + "-edited.pdf", "application/pdf")
 
 
 @app.get("/api/extract")
@@ -388,6 +395,7 @@ class JsApi:
     def save_url(self, path):
         """Fetch one of the download endpoints and save it where the user chooses."""
         import webview
+        saved_before = getattr(editor, "saved_version", None)
         with app.test_client() as c:
             resp = c.get(path)
         if resp.status_code != 200:
@@ -405,6 +413,7 @@ class JsApi:
             dialog = webview.SAVE_DIALOG
         target = self._window.create_file_dialog(dialog, save_filename=name, file_types=types)
         if not target:
+            editor.saved_version = saved_before   # cancelled: still not saved
             return {"saved": False}
         if isinstance(target, (list, tuple)):
             target = target[0]
@@ -414,6 +423,7 @@ class JsApi:
             with open(target, "wb") as f:
                 f.write(resp.data)
         except Exception as e:
+            editor.saved_version = saved_before
             return {"saved": False, "error": str(e)}
         return {"saved": True, "path": target}
 
@@ -460,6 +470,16 @@ def main():
             api = JsApi()
             api._window = webview.create_window(APP_NAME, url, js_api=api, width=1360, height=880,
                                                min_size=(900, 600))
+
+            def on_closing():
+                # do not lose edits that were never downloaded
+                if editor.dirty():
+                    return api._window.create_confirmation_dialog(
+                        APP_NAME, "Your changes have not been downloaded yet. "
+                                  "Close PDF Editor and lose them?")
+                return True
+
+            api._window.events.closing += on_closing
             webview.start()
             return
         except Exception as e:  # no WebView2 runtime etc. -> fall back to the browser

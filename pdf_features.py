@@ -49,6 +49,31 @@ class FeaturesMixin:
             self.version += 1
             return result
 
+    def edit_lines(self, pno, items, ov=None):
+        """Edit several lines as one undoable step. items: [{line, segs}] as for
+        edit_line. Each line keeps its own font."""
+        def same_line(a, b):
+            ta = "".join(s["text"] for s in a["spans"])
+            tb = "".join(s["text"] for s in b["spans"])
+            ba, bb = a["bbox"], b["bbox"]
+            return ta == tb and all(abs(ba[k] - bb[k]) < 1.0 for k in range(4))
+
+        def run():
+            report = []
+            # top to bottom; after each edit the page's line data is read again,
+            # because lines of one report field share data that an edit updates
+            for item in sorted(items, key=lambda it: (it["line"]["bbox"][1], it["line"]["bbox"][0])):
+                old = item["line"]
+                fresh = next((ln for ln in self.lines(pno)["lines"] if same_line(ln, old)), None)
+                if fresh is None or len(fresh["spans"]) != len(old["spans"]):
+                    fresh = old
+                res = self.edit_line(pno, fresh, item.get("segs", []), ov, snapshot=False)
+                for f in res.get("fonts", []):
+                    if f not in report:
+                        report.append(f)
+            return {"changed": True, "fonts": report}
+        return self._change(run)
+
     def missing_fonts(self):
         """Fonts the PDF uses that can be neither taken from the file nor found on
         this PC, so edited text would come out in a look-alike font."""

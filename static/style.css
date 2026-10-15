@@ -352,3 +352,8 @@ body.dragging #main { box-shadow: inset 0 0 0 3px var(--accent); }
 .line.sel { background: rgba(0,120,215,.32); outline: 0; }
 .editor.multi { box-shadow: 0 2px 8px rgba(20,30,60,.18); }
 .editor.multi:focus { outline-width: 2.5px; box-shadow: 0 4px 14px rgba(20,30,60,.3); z-index: 9; }
+/* several lines edited together in one box */
+.editor.block { white-space: pre; }
+.editor.block .brow { display: block; white-space: pre; }
+.editor.block .bghost { opacity: .38; cursor: default; user-select: none; }
+.editor.block .bghost:hover { opacity: .6; }

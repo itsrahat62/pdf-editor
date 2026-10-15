@@ -406,6 +406,22 @@ class PdfEditor(FeaturesMixin):
                     a0, a1 = along(s)
                     if min(a1, hx1) - max(a0, hx0) > 0.5 * max(a1 - a0, 0.01):
                         hit.add(n)
+                # pieces in the same font right next to the field, that no other
+                # field owns, are the rest of it (their letters fell elsewhere)
+                fonts_ = {ln["spans"][n]["font"] for n in hit}
+                grew = True
+                while grew:
+                    grew = False
+                    lo = min(along(ln["spans"][n])[0] for n in hit)
+                    hi = max(along(ln["spans"][n])[1] for n in hit)
+                    for n, s in enumerate(ln["spans"]):
+                        if n in hit or (li, n) in claimed or s["font"] not in fonts_:
+                            continue
+                        a0, a1 = along(s)
+                        gap = 0.6 * s["size"]
+                        if a0 <= hi + gap and a1 >= lo - gap:
+                            hit.add(n)
+                            grew = True
                 mine = [s for n, s in enumerate(ln["spans"]) if n in hit]
                 others = [s for n, s in enumerate(ln["spans"]) if n not in hit]
                 sp0 = min(mine, key=lambda s: s["origin"][0] * dc + s["origin"][1] * ds)

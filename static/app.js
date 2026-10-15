@@ -846,12 +846,6 @@ function makeEditor(pg, wrap) {
     } else if (ev.key === "Escape") {
       ev.preventDefault();
       cancelEdit();
-    } else if (S.edit && S.edit.mode === "multi" && (ev.key === "ArrowUp" || ev.key === "ArrowDown" || ev.key === "Tab")) {
-      // move between the selected lines
-      ev.preventDefault();
-      const rows = S.edit.rows, k = +ed.dataset.row;
-      const next = ev.key === "ArrowUp" || (ev.key === "Tab" && ev.shiftKey) ? k - 1 : k + 1;
-      if (next >= 0 && next < rows.length) focusEnd(rows[next].ed);
     }
     ev.stopPropagation();
   });
@@ -897,26 +891,125 @@ function makeLineEditor(pg, line) {
 
 function shownText(sp) { return sp.ansi ? BijoyAnsi.toUnicode(sp.text) : sp.text; }
 
-/** The line editors of the active edit: [{line, ed}]. */
+/** The lines of the active edit and the box they are edited in: [{line, ed}]. */
 function editRows(e) {
   if (!e) return [];
-  if (e.mode === "multi") return e.rows;
+  if (e.mode === "multi") return e.lines.map((line) => ({ line, ed: e.ed }));
   if (e.mode === "line") return [{ line: e.line, ed: e.ed }];
   return [];
 }
 
-function editorsOf(e) { return e.mode === "multi" ? e.rows.map((r) => r.ed) : [e.ed]; }
+function editorsOf(e) { return [e.ed]; }
 
-/** Edit several lines at once; each keeps its own font, size and colour. */
+const byPosition = (a, b) => (a.bbox[1] - b.bbox[1]) || (a.bbox[0] - b.bbox[0]);
+
+/** One editing box for several lines. Every line sits in its own row, at its
+    own place and in its own font; text typed anywhere belongs to the line (and
+    font) of the letters around it. `content` (Map line -> segs) keeps what was
+    already typed when the selection changes. */
+function buildBlock(e, content) {
+  const z = S.zoom, pg = e.pg, lines = e.lines;
+  const x0 = Math.min(...lines.map((l) => l.bbox[0]));
+  const y0 = Math.min(...lines.map((l) => l.bbox[1]));
+  const x1 = Math.max(...lines.map((l) => l.bbox[2]));
+  const ed = e.ed || makeEditor(pg);
+  ed.innerHTML = "";
+  ed.classList.add("block");
+  ed.style.left = x0 * z - 3 + "px";
+  ed.style.top = y0 * z - 2 + "px";
+  ed.style.padding = "2px 3px";
+  ed.style.minWidth = (x1 - x0) * z + 6 + "px";
+  ed.style.height = "auto";
+  ed.style.lineHeight = "normal";
+  ed.style.background = hex(sampleColor(pg, x0 - 1.5, y0 - 1.5));
+  // lines lying between the selected ones stay visible in the box, greyed and
+  // not editable (Ctrl+click adds one)
+  const y1 = Math.max(...lines.map((l) => l.bbox[3]));
+  const ghosts = (pg._lines || []).filter((l) => !lines.includes(l) && (l.bbox[1] + l.bbox[3]) / 2 > y0 &&
+    (l.bbox[1] + l.bbox[3]) / 2 < y1 && l.bbox[0] < x1 && l.bbox[2] > x0);
+  e.ghosts = ghosts;
+  const all = lines.map((line, l) => ({ line, l })).concat(ghosts.map((line, g) => ({ line, g })));
+  all.sort((a, b) => byPosition(a.line, b.line));
+  let bottom = y0;
+  all.forEach(({ line, l, g }) => {
+    const b = line.bbox;
+    const row = el("div", "brow");
+    if (g !== undefined) {
+      row.classList.add("bghost");
+      row.contentEditable = "false";
+      row.dataset.g = g;
+      const h = Math.max(4, b[3] - b[1]);
+      row.style.height = h * z + "px";
+      row.style.lineHeight = h * z + "px";
+      row.style.marginTop = Math.max(0, b[1] - bottom) * z + "px";
+      row.style.paddingLeft = (b[0] - x0) * z + "px";
+      bottom = Math.max(bottom, b[3]);
+      line.spans.forEach((sp, i) => {
+        const s = el("span", null, shownText(sp));
+        s.dataset.g = g;
+        s.dataset.i = i;
+        row.appendChild(s);
+      });
+      row.title = "Not selected — Ctrl+click to edit this line too";
+      row.addEventListener("mousedown", (ev) => {
+        if (ev.ctrlKey || ev.shiftKey) { ev.preventDefault(); ev.stopPropagation(); addLineToEdit(line); }
+      });
+      ed.appendChild(row);
+      return;
+    }
+    row.dataset.l = l;
+    const h = Math.max(4, b[3] - b[1]);
+    row.style.height = h * z + "px";
+    row.style.lineHeight = h * z + "px";
+    row.style.marginTop = Math.max(0, b[1] - bottom) * z + "px";
+    row.style.paddingLeft = (b[0] - x0) * z + "px";
+    bottom = Math.max(bottom, b[3]);
+    const kept = content && content.get(line);
+    const parts = kept || line.spans.map((sp, i) => ({ src: i, text: shownText(sp) }));
+    for (const part of parts) {
+      const sp = el("span", null, part.text);
+      sp.dataset.l = l;
+      sp.dataset.i = part.src;
+      row.appendChild(sp);
+    }
+    if (!parts.length) row.appendChild(document.createElement("br"));
+    ed.appendChild(row);
+  });
+  e.ed = ed;
+}
+
+/** What is typed in the box, per line: Map line -> [{src, text}]. */
+function blockContent(e) {
+  const out = new Map(e.lines.map((l) => [l, []]));
+  let owner = null;
+  const walker = document.createTreeWalker(e.ed, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    if (n.parentElement.closest(".bghost")) continue;
+    const span = n.parentElement.closest("span[data-l]");
+    const row = n.parentElement.closest(".brow");
+    if (span) owner = { l: +span.dataset.l, i: +span.dataset.i };
+    else if (row && (!owner || owner.l !== +row.dataset.l)) {
+      const line = e.lines[+row.dataset.l];
+      owner = { l: +row.dataset.l, i: line.spans.length - 1 };
+    }
+    if (!owner) owner = { l: 0, i: 0 };
+    const t = n.nodeValue.replace(/[\r\n]+/g, " ").replace(/\u00a0/g, " ");
+    if (!t) continue;
+    const segs = out.get(e.lines[owner.l]);
+    if (segs.length && segs[segs.length - 1].src === owner.i) segs[segs.length - 1].text += t;
+    else segs.push({ src: owner.i, text: t });
+  }
+  return out;
+}
+
+/** Edit several lines at once in one box; each keeps its own font, size and colour. */
 async function startMultiEdit(pg, lines) {
   await finishEdit();
   if (S.tool !== "edit" || !lines.length) return;
   if (lines.length === 1) { startEdit(pg, lines[0]); return; }
-  lines = lines.slice().sort((a, b) => (a.bbox[1] - b.bbox[1]) || (a.bbox[0] - b.bbox[0]));
-  const rows = lines.map((line) => ({ line, ed: makeLineEditor(pg, line) }));
-  S.edit = { mode: "multi", pg, rows, ov: {} };
-  rows.forEach((r, k) => { r.ed.dataset.row = k; r.ed.classList.add("multi"); });
-  const sp0 = lines[0].spans[0];
+  S.edit = { mode: "multi", pg, lines: lines.slice().sort(byPosition), ov: {} };
+  buildBlock(S.edit);
+  const sp0 = S.edit.lines[0].spans[0];
   $("font").value = "";
   $("font").placeholder = lines.length + " lines — each keeps its font";
   $("size").value = +sp0.size.toFixed(2);
@@ -925,35 +1018,34 @@ async function startMultiEdit(pg, lines) {
   setToggle("italic", false);
   showFontBar();
   stylePreview();
-  focusEnd(rows[0].ed);
+  focusEnd(S.edit.ed);
 }
 
-/** Ctrl/Shift + click: put one more line into the edit (or take it out again). */
+/** Ctrl/Shift + click: put one more line into the box (or take it out again). */
 function addLineToEdit(line) {
   const e = S.edit;
   if (e.mode === "line") {
+    const content = new Map([[e.line, collectSegs(e.ed)]]);
     e.mode = "multi";
-    e.rows = [{ line: e.line, ed: e.ed }];
-    e.ed.classList.add("multi");
-    delete e.line; delete e.ed;
+    e.lines = [e.line];
+    delete e.line;
+    e.content = content;
   }
-  const have = e.rows.findIndex((r) => r.line === line);
+  const content = e.content && !e.ed.classList.contains("block") ? e.content : blockContent(e);
+  delete e.content;
+  const have = e.lines.indexOf(line);
   if (have >= 0) {
-    if (e.rows.length === 1) return;
-    e.rows[have].ed.remove();          // clicked again: unselect it
-    e.rows.splice(have, 1);
+    if (e.lines.length === 1) return;
+    e.lines.splice(have, 1);          // clicked again: take it out
   } else {
-    const ed = makeLineEditor(e.pg, line);
-    ed.classList.add("multi");
-    e.rows.push({ line, ed });
+    e.lines.push(line);
   }
-  e.rows.sort((a, b) => (a.line.bbox[1] - b.line.bbox[1]) || (a.line.bbox[0] - b.line.bbox[0]));
-  e.rows.forEach((r, k) => { r.ed.dataset.row = k; });
-  $("font").placeholder = e.rows.length + " lines — each keeps its font";
+  e.lines.sort(byPosition);
+  buildBlock(e, content);
+  $("font").placeholder = e.lines.length + " lines — each keeps its font";
   showFontBar();
   stylePreview();
-  const added = e.rows.find((r) => r.line === line);
-  focusEnd((added || e.rows[0]).ed);
+  focusEnd(e.ed);
 }
 
 async function startEdit(pg, line) {
@@ -1076,11 +1168,16 @@ function stylePreview() {
     return;
   }
   const ov = e.ov;
+  if (e.mode === "multi") {
+    e.lines.forEach((line, l) => styleLineEditor(e, line, e.ed, ov, z, '[data-l="' + l + '"]'));
+    (e.ghosts || []).forEach((line, g) => styleLineEditor(e, line, e.ed, {}, z, '[data-g="' + g + '"]'));
+    return;
+  }
   for (const row of editRows(e)) styleLineEditor(e, row.line, row.ed, ov, z);
 }
 
-function styleLineEditor(e, line, ed, ov, z) {
-  ed.querySelectorAll("span[data-i]").forEach((s) => {
+function styleLineEditor(e, line, ed, ov, z, only) {
+  ed.querySelectorAll("span[data-i]" + (only || "")).forEach((s) => {
     const sp = line.spans[+s.dataset.i];
     if (!sp) return;
     const bold = ov.bold !== undefined ? ov.bold : !!(sp.flags & FLAG_BOLD);
@@ -1152,7 +1249,7 @@ function showFontBar() {
   }
   const keys = el("span", "keys");
   if (e.mode === "multi") {
-    keys.innerHTML = e.rows.length + " lines &nbsp; <kbd>↑</kbd><kbd>↓</kbd> move &nbsp; <kbd>Enter</kbd> apply all &nbsp; <kbd>Esc</kbd> cancel";
+    keys.innerHTML = e.lines.length + " lines in one box &nbsp; <kbd>Enter</kbd> apply all &nbsp; <kbd>Esc</kbd> cancel &nbsp; <kbd>Ctrl</kbd>+click add a line";
     bar.appendChild(keys);
     return;
   }
@@ -1206,9 +1303,9 @@ async function commit(e) {
   try {
     if (e.mode === "multi") {
       const items = [];
-      for (const row of e.rows) {
-        const segs = lineSegs(row.line, row.ed, e.ov);
-        if (segs) items.push({ line: row.line, segs });
+      for (const [line, typed] of blockContent(e)) {
+        const segs = segsToSend(line, typed, e.ov);
+        if (segs) items.push({ line, segs });
       }
       if (!items.length) return;          // nothing typed: the page stays exactly as it was
       res = await post("/api/page/" + pno + "/edit_lines", { items, ov: e.ov });
@@ -1235,7 +1332,10 @@ async function commit(e) {
 
 /** What to send for one edited line, or null when it was not changed. */
 function lineSegs(line, ed, ov) {
-  const segs = collectSegs(ed);
+  return segsToSend(line, collectSegs(ed), ov);
+}
+
+function segsToSend(line, segs, ov) {
   const same = !Object.keys(ov).length && line.spans.every((sp, i) => {
     const sg = segs.filter((s) => s.src === i).map((s) => s.text).join("");
     return sg === shownText(sp);

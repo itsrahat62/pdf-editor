@@ -16,7 +16,7 @@ Get `PDF-Editor-Setup.exe` from the [Releases](../../releases) page and run it. 
 - Works with report-generated Bangla PDFs (JasperReports / OpenPDF government forms) whose text is stored as *ActualText*.
 - **Add text**, **Text box** (paragraph that wraps), **Move** a line, **Image**, **Signature** (draw or type, saved for next time), **Erase** (really removes what is under the box).
 - **Find & Replace** across all pages, Bangla included.
-- **Edit several lines at once** — in *Edit text*, drag over lines with the mouse (like selecting text) or Ctrl/Shift-click lines; every selected line opens for editing, each in its own font. `↑` / `↓` move between them, `Enter` applies all, `Ctrl+A` takes every line of the page.
+- **Edit several lines at once** — in *Edit text*, drag over lines with the mouse (like selecting text) or Ctrl/Shift-click lines. The selected lines open together in **one box**, each at its place and in its own font; move around and type anywhere in it, then press `Enter` to apply all. Lines in between that were not selected stay visible in grey (Ctrl+click one to add it). `Ctrl+A` takes every line of the page.
 - Clicking or selecting never changes the page by itself: lines that were not typed in stay exactly as they were.
 - Change font, size, colour, bold/italic.
 

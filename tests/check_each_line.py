@@ -18,6 +18,8 @@ def snap(p):
 
 problems = 0
 total = 0
+# Bangla, English and brackets, at the end or the start of the line
+MARKS = [(" ১২3", "end"), ("[Q] ", "start"), ("[C]", "end"), ("নতুন ", "start")]
 for p in range(ed.doc.page_count):
     base = snap(p)
     st0 = ed.state()
@@ -26,7 +28,11 @@ for p in range(ed.doc.page_count):
         line = ed.lines(p)["lines"][i]
         text = "".join(s["text"] for s in line["spans"])
         segs = [{"src": k, "text": s["text"]} for k, s in enumerate(line["spans"])]
-        segs[-1]["text"] += " ১২3"
+        mark, where = MARKS[(i + p) % len(MARKS)]
+        if where == "end":
+            segs[-1]["text"] += mark
+        else:
+            segs[0]["text"] = mark + segs[0]["text"]
         try:
             ed.edit_line(p, line, segs)
         except Exception as e:
@@ -35,7 +41,7 @@ for p in range(ed.doc.page_count):
         after = snap(p)
         others_before = [t for k, (t, _) in enumerate(base) if k != i]
         texts_after = [t for t, _ in after]
-        want = text + " ১২3"
+        want = text + mark if where == "end" else mark + text
         if want not in texts_after:
             print("NOT CHANGED/WRONG", p, i, repr(text[:50]), "->", [t for t in texts_after if t not in others_before][:3]); problems += 1
         missing = [t for t in others_before if t not in texts_after]
